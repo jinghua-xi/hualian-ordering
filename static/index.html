@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <title>在线接单 · 华联服装辅料福州分公司</title>
+  <link rel="stylesheet" href="./styles.css?v=catalog-100-1">
+  <script type="module" src="./app.js?v=cart-transitions-1"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="./" aria-label="华联服装辅料福州分公司首页">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span><strong>华联服装辅料</strong><small>福州分公司 · 在线接单</small></span>
+      </a>
+      <div class="topbar-actions">
+        <a class="quiet-link" href="./history/">历史订单 <span aria-hidden="true">↗</span></a>
+        <form method="post" action="./logout">
+          <button class="quiet-link" type="submit">登出</button>
+        </form>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero customer-hero" aria-labelledby="page-title">
+      <div class="hero-copy">
+        <div class="eyebrow">福州分公司 · 接单演示</div>
+        <h1 id="page-title">服装辅料在线接单</h1>
+        <p id="page-intro">可用AI咨询、智能粘贴、历史复购或手动选品，补全信息后加入采购车统一提交。</p>
+        <div class="feature-toggles" role="group" aria-label="接单工具">
+          <button class="button secondary feature-toggle" id="open-chat" type="button" aria-controls="chat-panel" aria-expanded="false">AI 接单助手 <svg class="fold-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M12 7l5 5-5 5"/></svg></button>
+          <button class="button secondary feature-toggle" id="open-paste" type="button" aria-controls="paste-panel" aria-expanded="false">智能粘贴 <svg class="fold-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M12 7l5 5-5 5"/></svg></button>
+        </div>
+        <a class="button secondary reorder-entry" href="./history/?reorder=1">从历史订单再来一单 <span aria-hidden="true">→</span></a>
+      </div>
+      <ol class="steps" aria-label="接单进度">
+        <li aria-current="step"><span>01</span> 选品与补全</li>
+        <li><span>02</span> 核对采购车</li>
+        <li><span>03</span> 提交订单</li>
+      </ol>
+    </section>
+
+    <section class="panel chat-panel tool-panel" id="chat-panel" hidden aria-labelledby="chat-title">
+        <div class="panel-head">
+          <div class="heading-group">
+            <span class="section-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.6-3A7.5 7.5 0 1 1 20 11.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 11.5h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </span>
+            <div>
+              <h2 id="chat-title">AI 接单助手</h2>
+              <p>说用途帮您选型，也可查商品或直接下单</p>
+            </div>
+          </div>
+          <div class="tool-panel-actions"><span class="tag" id="chat-source">对话接单</span><button id="close-chat" class="quiet-link" type="button" aria-label="收起AI接单助手">收起</button></div>
+        </div>
+        <div class="conversation" id="messages" role="log" aria-live="polite" aria-relevant="additions">
+          <div class="message assistant"><span class="message-label">AI 接单助手</span><p>您好！告诉我辅料要用在哪里，我可以帮您选型。也可以直接查询商品、规格，或告诉我您要订什么。</p></div>
+        </div>
+        <div class="chat-controls">
+          <div class="quick-replies" id="choices" aria-label="选型与查询示例、快捷回复">
+            <button class="choice" type="button" value="帽子抽绳需要收紧和固定，应该选什么配件？">帽绳如何收紧？</button>
+            <button class="choice" type="button" value="背包用25毫米织带，需要经常快速解开和扣合，推荐什么？">背包织带要快拆</button>
+            <button class="choice" type="button" value="20毫米肩带只需要调节长短，不需要拆开，应该选什么扣？">肩带只调节长短</button>
+            <button class="choice" type="button" value="戴手套时抓不住背包拉链头，想加一个方便抓握的配件，推荐什么？">拉链头不方便抓握</button>
+            <button class="choice" type="button" value="手工安装T5塑料四合扣，应该用什么工具？">T5安装用什么工具？</button>
+          </div>
+          <form class="composer" id="chat-form">
+            <label class="sr-only" for="chat-message">输入辅料需求</label>
+            <input id="chat-message" name="message" placeholder="描述用途、查商品或补充订单信息" maxlength="500" autocomplete="off" required>
+            <button class="button primary send" type="submit"><span>发送</span><span aria-hidden="true">↑</span></button>
+          </form>
+          <p class="inline-error" id="chat-error" role="alert" hidden></p>
+        </div>
+      </section>
+
+    <section id="paste-panel" class="panel order-form paste-panel" aria-labelledby="paste-title" hidden>
+      <div class="paste-heading"><div><h2 id="paste-title">智能粘贴</h2><p>支持Excel多行复制和采购文字。只有一个交期时默认全单共用；不同交期请写在对应商品旁。</p></div><button id="close-paste" class="quiet-link" type="button">收起</button></div>
+      <div class="paste-input-toolbar">
+        <label class="paste-input-title" for="paste-text">粘贴采购内容<small>（最多12000字）</small></label>
+        <div class="paste-input-actions">
+          <label class="model-switch-label"><span>Qwen 辅助<small id="paste-model-hint">可能需要15秒</small></span><input id="paste-model" class="model-switch" type="checkbox" checked role="switch" aria-label="Qwen 辅助识别" aria-describedby="paste-model-hint"></label>
+          <button id="parse-paste" type="button" class="button primary">识别并核对</button>
+        </div>
+      </div>
+      <textarea id="paste-text" rows="5" maxlength="12000" placeholder="黑色T5四合扣 2000套&#10;M916-25插扣 500个&#10;2026年12月23日交货"></textarea>
+      <p id="paste-error" role="alert" class="inline-error" hidden></p><p id="paste-info" role="status"></p>
+      <div id="paste-review" hidden>
+        <p id="paste-warnings" class="field-hint"></p>
+        <div class="orders-wrap"><table class="orders-table paste-table"><thead><tr><th>原文</th><th>商品与规格</th><th>数量 / 目录单位</th><th>交付日期</th><th>备注</th><th>检查与操作</th></tr></thead><tbody id="paste-rows"></tbody></table></div>
+        <div class="paste-common"><label for="paste-common-date">批量填写交期</label><input id="paste-common-date" type="date"><select id="paste-date-mode" aria-label="批量交期应用范围"><option value="missing">只填写空白交期</option><option value="all">统一全部商品交期</option></select><button id="apply-paste-date" type="button" class="button secondary" aria-label="应用批量交期">应用</button></div>
+        <label class="paste-check"><input id="paste-confirm" type="checkbox">我已对照原文核对商品、数量、单位、交期，确认没有遗漏。</label>
+        <p id="paste-validation" role="status"></p><button id="import-paste" type="button" class="button primary" disabled>确认并加入采购车</button>
+        <p class="field-hint">会保留当前采购车和商品草稿。本步骤不提交订单。</p>
+      </div>
+    </section>
+    <section id="reorder-notice" class="panel order-form" role="status" hidden></section>
+    <div class="workspace" id="order-workspace">
+      <section class="panel draft-panel" aria-labelledby="draft-title">
+        <div class="panel-head">
+          <div class="heading-group">
+            <span class="section-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M8 4h8l3 3v13H5V4h3Zm8 0v4h3M8 12h8m-8 4h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <div>
+              <h2 id="draft-title">商品填写</h2>
+              <p>选好商品后加入采购车</p>
+            </div>
+          </div>
+          <span class="tag" id="draft-status">待填写</span>
+        </div>
+
+          <form id="draft-form" class="order-form">
+            <div class="field">
+              <label for="product">商品与规格</label>
+              <select id="product" name="sku" aria-describedby="product-hint" required>
+                <option value="">正在加载厂家公开货号…</option>
+              </select>
+              <p class="field-hint" id="product-hint">可在对话中选择规格，也可以在这里手动选择。</p>
+            </div>
+            <dl class="product-detail" id="product-detail" hidden>
+              <div><dt>货号</dt><dd id="detail-sku"></dd></div>
+              <div><dt>规格</dt><dd id="detail-spec"></dd></div>
+              <div><dt>颜色</dt><dd id="detail-color"></dd></div>
+              <div class="product-detail-wide" id="detail-notes-row" hidden>
+                <dt>商品说明与选型</dt><dd id="detail-notes"></dd>
+              </div>
+            </dl>
+            <div class="field">
+              <label for="quantity">订购数量</label>
+              <div class="quantity-field">
+                <input id="quantity" name="quantity" type="number" min="1" max="1000000" step="1" inputmode="numeric" placeholder="填写数量" required>
+                <span id="quantity-unit" aria-live="polite"></span>
+              </div>
+            </div>
+            <div class="field">
+              <label for="delivery-date">期望交期</label>
+              <input id="delivery-date" name="delivery_date" type="date" aria-describedby="delivery-hint" required>
+              <p class="field-hint" id="delivery-hint">请预留至少 7 天，实际交期由销售确认。</p>
+            </div>
+            <div class="field">
+              <label for="item-note">商品备注（选填）</label>
+              <textarea id="item-note" rows="2" maxlength="100" aria-describedby="item-note-hint" placeholder="例如包装或色号要求"></textarea>
+              <p class="field-hint" id="item-note-hint">仅用于当前商品，最多 100 字。</p>
+            </div>
+            <p class="inline-error" id="draft-error" role="alert" hidden></p>
+            <div class="composer">
+              <button id="add-item" class="button secondary submit" type="submit">加入采购车 <span aria-hidden="true">＋</span></button>
+              <button id="clear-draft" class="choice" type="button" hidden>清空当前商品</button>
+            </div>
+          </form>
+
+      </section>
+      <section class="panel cart-panel" aria-labelledby="cart-title">
+        <div class="panel-head"><div><h2 id="cart-title">采购车</h2><p id="cart-panel-hint">核对商品、数量和交期，整单提交。</p></div><span class="tag" id="cart-count">0 项</span></div>
+        <div class="paste-common cart-bulk-date" id="cart-bulk-date" role="group" aria-label="采购车批量交期" hidden>
+          <label for="cart-common-date">批量修改期望交期</label>
+          <input id="cart-common-date" type="date">
+          <select id="cart-date-mode" aria-label="采购车交期应用范围"><option value="all">统一全部商品交期</option><option value="missing">只填写空白交期</option></select>
+          <button id="apply-cart-date" type="button" class="button secondary" aria-label="应用采购车交期">应用</button>
+        </div>
+          <form id="order-form" class="order-form" aria-labelledby="cart-title">
+
+            <p class="field-hint cart-feedback" id="cart-feedback" role="status" hidden></p>
+            <p class="cart-empty" id="cart-empty">还没有商品。选好规格、数量和期望交期后加入。</p>
+            <ol class="cart-items" id="cart-items" aria-label="采购车商品" hidden></ol>
+            <template id="cart-item-template">
+              <li class="cart-item" data-cart-index="">
+                <div class="cart-product"><strong></strong><p></p></div>
+                <button class="choice cart-remove" type="button" data-remove>移除</button>
+                <div class="cart-fields">
+                  <label class="cart-field">数量
+                    <span class="quantity-field">
+                      <input type="number" min="1" max="1000000" step="1" inputmode="numeric" data-quantity required>
+                      <span class="cart-unit"></span>
+                    </span>
+                  </label>
+                  <label class="cart-field">期望交期
+                    <input type="date" data-delivery-date required>
+                  </label>
+                  <label class="cart-field cart-note">商品备注（选填，最多 100 字）
+                    <textarea rows="2" maxlength="100" data-note></textarea>
+                  </label>
+                </div>
+              </li>
+            </template>
+            <div class="field">
+              <label for="customer">客户名称</label>
+              <input id="customer" name="customer" placeholder="填写公司或客户名称" maxlength="80" required>
+            </div>
+            <fieldset id="contact-fields" hidden>
+              <legend>联系方式（至少填写一种）</legend>
+              <div class="field"><label for="contact-qq">QQ</label><input id="contact-qq" maxlength="15" inputmode="numeric"></div>
+              <div class="field"><label for="contact-email">邮箱</label><input id="contact-email" type="email" maxlength="128" autocomplete="email"></div>
+              <div class="field"><label for="contact-phone">电话</label><input id="contact-phone" type="tel" maxlength="40" autocomplete="tel"></div>
+              <div class="field"><label for="contact-wechat">微信</label><input id="contact-wechat" maxlength="128"></div>
+              <p class="field-hint">提交后由销售联系。询价不代表已确认的正式订单。</p>
+            </fieldset>
+            <p class="inline-error" id="order-error" role="alert" hidden></p>
+            <button id="submit-order" class="button primary submit" type="button">确认并提交订单 <span aria-hidden="true">→</span></button>
+            <p class="field-hint after-submit">采购车内商品会合并成一笔订单。库存、报价和交期由销售确认。</p>
+          </form>
+      </section>
+    </div>
+        <section class="receipt panel" id="receipt" aria-labelledby="receipt-title" hidden>
+          <span class="receipt-check" aria-hidden="true">✓</span>
+          <h3 id="receipt-title" tabindex="-1">订单已提交</h3>
+          <p>可在历史订单中查看这笔订单的状态。</p>
+          <dl>
+            <div><dt>订单号</dt><dd id="receipt-number"></dd></div>
+            <div><dt>客户</dt><dd id="receipt-customer"></dd></div>
+          </dl>
+          <ol class="receipt-items" id="receipt-items" aria-label="已提交商品"></ol>
+          <p class="receipt-email" id="receipt-email" hidden></p>
+          <button id="new-order" class="button secondary" type="button">新建订单</button>
+        </section>
+
+    <footer class="footer">
+      <span>华联服装辅料 · 福州分公司</span>
+      <span>厂家公开资料 · 仅用于试单</span>
+    </footer>
+  </main>
+</body>
+</html>

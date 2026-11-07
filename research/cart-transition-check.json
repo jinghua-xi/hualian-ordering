@@ -1,0 +1,38 @@
+{
+  "regression_tests_passed": 52,
+  "browser_checks": [
+    {
+      "case": "完整T5商品后点击帽绳用途建议",
+      "result": "T5自动加入采购车，保留100套、交期和备注"
+    },
+    {
+      "case": "刷新页面",
+      "result": "采购车、客户名称及明细均保留"
+    },
+    {
+      "case": "M916-25缺少交期后咨询金属吊钟",
+      "result": "提示未完成草稿；采购车保持1项，草稿保留"
+    },
+    {
+      "case": "补齐M916-25交期后再次咨询",
+      "result": "自动加入第2项，保留50个和独立交期"
+    },
+    {
+      "case": "重复同一咨询",
+      "result": "采购车仍为2项，无重复保存"
+    }
+  ],
+  "writes_to_live_orders": false,
+  "sends_order_email": false,
+  "live_check": {
+    "release": "20261107T172931Z-b44c53ee",
+    "passed": true,
+    "cart_count": 1,
+    "sku": "T5",
+    "quantity": 100,
+    "delivery_date": "2026-12-23",
+    "note_retained": true,
+    "chat_notice_visible": true,
+    "submitted_order": false
+  }
+}

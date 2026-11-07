@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <title>历史订单 · 华联服装辅料福州分公司</title>
+  <link rel="stylesheet" href="../styles.css?v=catalog-100-1">
+  <script type="module" src="../sales.js?v=catalog-100-1"></script>
+</head>
+<body data-order-history="customer">
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="../" aria-label="华联服装辅料福州分公司首页">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span><strong>华联服装辅料</strong><small>福州分公司 · 在线接单</small></span>
+      </a>
+      <a class="quiet-link" href="../"><span aria-hidden="true">←</span> 返回接单页</a>
+    </div>
+  </header>
+  <main class="shell sales-page">
+    <section class="hero sales-hero">
+      <div class="hero-copy">
+        <div class="eyebrow">我的账户</div>
+        <h1>历史订单</h1>
+        <p>查看自己的订单，点击「再来一单」复制商品和数量，重新选择交期后提交。</p>
+      </div>
+    </section>
+    <section class="panel sales-panel" aria-labelledby="sales-title">
+      <div class="panel-head">
+        <div>
+          <h2 id="sales-title">我的订单</h2>
+          <p id="sales-count" aria-live="polite">正在加载订单</p>
+        </div>
+        <div class="sales-actions">
+          <label class="sr-only" for="order-search">搜索订单号或客户名称</label>
+          <input id="order-search" type="search" maxlength="80" placeholder="搜索订单号或客户名称">
+          <button id="refresh-orders" class="button secondary" type="button">刷新订单</button>
+        </div>
+      </div>
+      <p id="sales-error" class="inline-error" role="alert" hidden></p>
+      <div class="orders-wrap" id="orders-wrap" tabindex="0" aria-label="订单列表，可横向滚动" hidden>
+        <table class="orders-table">
+          <thead>
+            <tr><th scope="col">订单号</th><th scope="col">客户</th><th scope="col">商品与货号</th><th scope="col">规格与颜色</th><th scope="col">数量</th><th scope="col">期望交付</th><th scope="col">提交时间</th><th scope="col">状态</th><th scope="col">再次采购</th></tr>
+          </thead>
+          <tbody id="orders"></tbody>
+        </table>
+      </div>
+      <p id="orders-empty" class="empty-orders" hidden>当前账号还没有历史订单。提交试单后，可以在这里查看。</p>
+    </section>
+    <footer class="footer">
+      <span>华联服装辅料 · 福州分公司</span>
+      <span>公开商品目录 · 订单仅用于试单</span>
+    </footer>
+  </main>
+</body>
+</html>

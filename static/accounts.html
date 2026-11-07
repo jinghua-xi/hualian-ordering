@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>账号管理 · 华联服装辅料</title>
+  <link rel="stylesheet" href="/styles.css?v=catalog-100-1">
+  <script type="module" src="/management.js?v=catalog-100-1"></script>
+</head>
+<body class="accounts-page">
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="/sales/">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span><strong>账号管理</strong><small>华联服装辅料 · 福州分公司</small></span>
+      </a>
+      <nav class="topbar-actions" aria-label="页面导航">
+        <a class="quiet-link" href="/sales/">← 返回销售后台</a>
+      </nav>
+    </div>
+  </header>
+  <main class="shell accounts-main">
+    <section class="panel accounts-create" aria-labelledby="create-account-title">
+      <div class="accounts-section-title">
+        <h1 id="create-account-title">内部派发账号</h1>
+        <p>采购员仅查看自己的订单；销售处理询价和订单。账号由管理员统一管理。</p>
+      </div>
+      <form id="account-form" class="account-create-form">
+        <div class="field">
+          <label for="account-name">账号</label>
+          <input id="account-name" required pattern="[A-Za-z0-9_-]{3,64}" maxlength="64" autocomplete="off" placeholder="3–64 位字母、数字、_ 或 -" title="3至64位字母、数字、下划线或短横线">
+        </div>
+        <div class="field">
+          <label for="account-customer">客户名称</label>
+          <input id="account-customer" maxlength="80" placeholder="客户/公司名称，默认同账号">
+        </div>
+        <div class="field">
+          <label for="account-password">初始密码</label>
+          <input id="account-password" type="password" required minlength="4" maxlength="18" autocomplete="new-password" placeholder="4–18 位">
+        </div>
+        <div class="field">
+          <label for="account-role">身份</label>
+          <select id="account-role"><option value="buyer">客户采购员</option><option value="sales">公司销售</option></select>
+        </div>
+        <button class="button primary" type="submit">创建账号</button>
+      </form>
+    </section>
+    <p id="account-notice" class="account-notice" role="status" aria-live="polite"></p>
+    <section class="panel accounts-directory" aria-labelledby="account-list-title">
+      <div class="accounts-list-heading">
+        <h2 id="account-list-title">已派发账号</h2>
+        <span id="account-count" class="account-count">正在加载</span>
+      </div>
+      <div id="account-list"><p class="account-empty">正在加载账号…</p></div>
+    </section>
+  </main>
+</body>
+</html>

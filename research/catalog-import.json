@@ -1,0 +1,92 @@
+{
+  "built_at": "2026-11-07T17:09:31.014869+00:00",
+  "count": 100,
+  "category_counts": {
+    "四合扣": 15,
+    "调节扣": 23,
+    "插扣": 19,
+    "D环扣": 2,
+    "钩扣": 12,
+    "对扣": 3,
+    "绳扣": 13,
+    "绳尾夹": 5,
+    "拉片": 6,
+    "打扣工具": 2
+  },
+  "verification_counts": {
+    "公开型号及规格": 65,
+    "既有目录，待销售复核": 6,
+    "公开型号，规格待确认": 29
+  },
+  "internal_variant_skus": [
+    "T5-GRAY",
+    "M364-V20",
+    "M364-V25",
+    "M364-V32",
+    "M364-V38",
+    "K49-V10",
+    "K49-V12",
+    "K49-V15",
+    "K49-V20",
+    "K49-V25",
+    "K49-V32",
+    "K49-V38",
+    "DK-001-PRESS",
+    "DK-001-REMOVE",
+    "T5-RED",
+    "T5-WHITE"
+  ],
+  "company_identity": {
+    "likely_entity": "福建省石狮市华联服装配件企业有限公司",
+    "brands": [
+      "华联",
+      "KAM"
+    ],
+    "fuzhou_branch_verified": false,
+    "inventory_verified": false,
+    "intro_source": "https://wap.gzitn.com/store.php?CompID=3897",
+    "brand_source": "https://www.kam-hl.com/zh-hant/"
+  },
+  "taobao": {
+    "search_url": "https://s.taobao.com/search?q=KAM华联服装辅料",
+    "status": "仅取得动态页面外壳，无可导入商品明细；未登录或绕过访问限制",
+    "imported_records": 0
+  },
+  "public_source": "https://www.yiwugo.com/hu/888004278.html",
+  "readable_listing_count": 68,
+  "unreadable_listing_count": 54,
+  "rules": [
+    "来源链接仅内部存档，不在客户商品卡中展示",
+    "商品描述与选型建议为独立编写的一般用途说明，不是性能认证",
+    "包含同一公开页面中的不同型号、尺寸和颜色SKU",
+    "内部变体SKU与厂家型号分开保存",
+    "未导入店铺价格、实时库存、客户或成本数据"
+  ],
+  "invoice_clues": [
+    "HT01",
+    "T8A",
+    "J024-36",
+    "M032F-40",
+    "M232-25",
+    "M031-40",
+    "J051-40"
+  ],
+  "invoice_clues_status": "图片货号未能逐项核实名称和规格，未强行映射为其他商品",
+  "tests": {
+    "regression_cases_passed": 45,
+    "catalog_cases": 8,
+    "coverage": [
+      "100个SKU与10个品类",
+      "旧货号、颜色、单位兼容",
+      "不存在货号不自动替换",
+      "备注不干扰颜色识别",
+      "单位不自动换算",
+      "未知孔径不当作已知",
+      "Qwen上下文长度限制",
+      "安装工具与拆卸工具区分",
+      "采购员及销售权限",
+      "智能粘贴数量日期异常",
+      "部署备份与传输"
+    ]
+  }
+}
