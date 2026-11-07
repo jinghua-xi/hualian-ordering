@@ -1,87 +1,110 @@
-# 华联服装辅料接单演示
+# Hualian Ordering | 华联服装辅料在线接单
 
-项目用 Python 3.9 或更新版本运行，依赖 Python 自带的 HTTP 服务和 SQLite。`catalog.json` 现有100个商品SKU，含公开页面列出的型号、尺寸及颜色变体，覆盖10类。每条提供用途描述、材质、单位、关键词和选型提醒。65条有公开型号及规格，29条仍有规格待确认，6条保留旧目录并待销售复核。福州分公司的可供规格、库存和价格由销售确认，页面提交的订单用于试单。
+English · [简体中文](README.zh-CN.md)
 
-本次淘宝公开页未取得可导入明细，实际采用KAM华联公开商家目录；没有将其称为100条淘宝爬取结果。商品来源只在内部保存，不在客户商品卡中展示。采集事实与导入说明保存在 `research/public-products.json`、`research/catalog-import.json`；旧目录备份在 `backups/catalog-before-100-products.json`。`tools/build_catalog.py` 可依据已保存事实重建本次目录，不连接网络或修改订单。内部变体SKU与厂家型号分别保存，未将同页所有款式假定为同一规格或单位。
+An AI-assisted B2B ordering prototype for Hualian Garment Accessories, Fuzhou. It combines self-hosted Qwen3-8B, a 100-SKU catalogue, procurement-text parsing, a multi-item cart and a sales dashboard to turn purchasing requests into validated order drafts.
 
-Git仓库包含可复现的旧目录基线 `tools/catalog-baseline.json`，新下载的项目可以直接运行产品库测试和重建脚本。业务名称、商品资料、公开来源和现有说明保留原内容；运行数据库、部署私钥和SMTP凭据分别保存在本机或服务器配置中。
+面向华联服装辅料福州分公司的接单试用项目：结合自部署模型、商品检索、智能粘贴、采购车和销售后台，将采购需求整理为可核对的订单。
 
-`catalog_search.py` 用货号、用途、品类、描述和关键词检索相关商品，给Qwen提供有长度上限的候选资料。未知型号、未公开尺寸和不一致单位需用户或销售核对。安装工具和拆卸工具按用途分别推荐，外形尺寸不当作穿绳孔径。
+**Status:** deployed for trial use. Availability, final prices and actual delivery dates require sales confirmation. This is a prototype, with no claim of production-scale operation.
 
-## 本地试单
+## Features
 
-在项目目录运行下列命令。此模式用演示规则模拟追问，适合优云实例关机时验证页面和订单流程。
+- **Use-case recommendations:** retrieve products by purpose, category, material, colour and dimensions. Qwen receives a bounded set of catalogue descriptions and asks for missing information.
+- **Drafts and carts:** editable quantities, per-item delivery dates and notes of up to 100 characters. A completed draft is automatically saved to the cart when the customer starts another product inquiry; incomplete drafts are retained with a reminder. Includes bulk date editing and browser-session recovery.
+- **Smart paste:** parse procurement text or rows copied from Excel. Rules run first; Qwen assistance is enabled by default and can help split complex text when a GPU is available. Model failures preserve rule-based results for review. Supports shared dates and separate per-item dates.
+- **Buyer and guest workflows:** internally issued buyer accounts see only their own orders and can reorder. New customers submit an inquiry without an account and provide at least one contact method.
+- **Sales and administration:** sales staff review inquiries and buyer orders, update four order statuses, undo the latest status change and export Excel. Only administrators manage accounts and bound customer names.
+- **Order notifications:** China-time timestamps and daily sequential order IDs, Excel workbooks and a retryable SMTP outbox. Sales can pause notifications and change the recipient.
+- **Deployment and validation:** one SSH command validates, backs up, uploads, restarts and checks the application, with an attempted source rollback on failure. The current regression suite contains 52 tests.
 
-```sh
-DEMO_MODE=1 SALES_PASSWORD=local-demo-only python3 server.py
+## Stack and request flow
+
+Python 3.9+ standard library, SQLite, HTML/CSS/JavaScript, Ollama and Qwen3-8B. The web application has no third-party Python package requirements; the model runs as a separate service.
+
+```text
+Browser: AI chat / smart paste / manual selection
+  -> Python API: catalogue retrieval and field extraction
+  -> Ollama / Qwen3-8B: constrained structured output
+  -> Server validation: products, quantities, units, dates and permissions
+  -> Item draft -> cart -> SQLite
+  -> Excel export and SMTP notification queue
 ```
 
-打开 [接单页](http://127.0.0.1:8765/)，输入「我要 2000 套黑色四合扣」，选择 **T5 · 12.4 mm**，填期望交期后加入采购车。可以继续添加其他货号，在采购车中逐项改数量、交期或移除。填一次客户名称即可整单提交。打开 [销售后台](http://127.0.0.1:8765/sales/)，用 `sales` 和 `local-demo-only` 登录，核对订单明细并下载 Excel。
+Retrieval uses local SKU, category, purpose, keyword and dimension matching. The model receives relevant records rather than the entire catalogue on every turn. Model output is checked against catalogue values and server-side order validation.
 
-## 用优云上的 Qwen3-8B 联调
+## Run locally
 
-已配置本地到优云的源码部署。服务器开机后，在本地项目目录执行：
+These credentials are for a local demonstration. Demo mode uses deterministic rules, so the UI and order workflow can be tested while the GPU server is offline.
 
 ```sh
-./deploy
+DEMO_MODE=1 ORDERS_DB=./data/demo.sqlite3 \
+PREVIEW_USER=preview PREVIEW_PASSWORD=preview \
+SALES_USER=admin SALES_PASSWORD=admin \
+python3 server.py
 ```
 
-命令会上传源码、预检、备份、重启接单服务并检查。源码切换后检查失败会尝试回退源码。不会上传本地测试订单或覆盖云端凭据；Qwen 模型留在云端。详细步骤见 [部署说明](ops/DEPLOYMENT.md)。
+- Buyer entry: <http://127.0.0.1:8765/>, local demo credentials `preview` / `preview`.
+- Guest inquiry: <http://127.0.0.1:8765/?guest=1>.
+- Administrator entry: <http://127.0.0.1:8765/admin/login>, local demo credentials `admin` / `admin`.
+- Sales entry: <http://127.0.0.1:8765/sales/login>; an administrator can issue sales accounts.
 
-当前线上目录为 `/workspace/ordering-preview`，访问 [云端接单页](https://8767-cpod-1xdwqzrhaexo.pod.compshare.cn/)。该实例已配置开机启动 Ollama 和网站。无卡模式可以测试网站和表单，完整 Qwen 问答请使用 GPU 模式。实例回收前需备份源码、订单与私有配置。
+Try `我要2000套黑色四合扣` (2,000 sets of black snap fasteners), select T5 and enter a delivery date at least seven days ahead. Add it manually or start an inquiry about a different product to save the completed draft automatically.
 
-本地订单默认保存在 `data/orders.sqlite3`；线上订单库为 `/workspace/ordering-preview/orders.sqlite3`，两者独立。
+For model-backed chat, use `DEMO_MODE=0`. The defaults are `OLLAMA_BASE_URL=http://127.0.0.1:11434` and `OLLAMA_MODEL=qwen3:8b`. GPU integration tests and rule-based local tests are separate.
 
-## 自动发订单邮件
+## Catalogue and provenance
 
-接单服务把整单和邮件任务一起保存。销售后台可以查看发信状态并下载同一份 Excel。服务会把排队的采购车订单发到 `ORDER_RECIPIENT` 指定的邮箱，默认是 `jiahuaqinan@gmail.com`。优云部署可在 `preview.env` 中修改 `ORDER_RECIPIENT`，然后重启接单服务。
+`catalog.json` contains **100 SKUs across 10 categories**, including model, size and colour variants from public listings: 65 have public model/specification information, 29 still have specifications to confirm, and six retain legacy records awaiting sales review. It does not provide live stock or sales prices.
 
-Gmail 发件使用 `SMTP_HOST=smtp.gmail.com`、`SMTP_SECURITY=ssl` 和 `SMTP_PORT=465`。将发件地址设为 `SMTP_USERNAME`，将 Gmail 应用专用密码设为 `SMTP_PASSWORD`，然后在含这些环境变量的终端重启接单服务。可选的 `SMTP_FROM` 默认使用发件账号。凭据应保存在服务器的私有配置中。 [Google 应用专用密码说明](https://support.google.com/mail/answer/185833)
+The import used public KAM/Hualian supplier listings. Taobao's dynamic pages did not yield importable item details, so the dataset is not described as 100 scraped Taobao products. Sources are retained internally and omitted from customer product cards.
 
-## 采购员账号与新客户询价
+| File | Purpose |
+| --- | --- |
+| `catalog.json` | Runtime products, descriptions, materials, keywords and selection notes |
+| `catalog_search.py` | Local retrieval, material/dimension checks and bounded model context |
+| `tools/catalog-baseline.json` | Reproducible legacy baseline preserving historical SKU/unit/colour keys |
+| `research/public-products.json` | Saved public product facts |
+| `research/catalog-import.json` | Import counts, verification status and source limitations |
 
-登录页的「新客户」链接进入无需账号的订单询价页。客户名称必填，QQ、邮箱、电话、微信至少填一种；询价编号以 `XJ-FZ-年月日-四位序号` 显示。销售在后台核对联系方式和商品，可调整交期后转成正式订单，再沿用订单邮件流程。询价阶段不自动生成正式订单。
+```sh
+python3 tools/build_catalog.py
+```
 
-管理员登录后进入销售后台的「账号管理」，创建采购员或销售账号，通过内部渠道派发密码。采购员只能查询自己账号提交的订单和状态；普通销售处理全部询价及订单，不能管理账号。账号密码使用带随机盐的 PBKDF2 保存；重置或停用账号会使旧登录失效。
+The rebuild uses saved facts and the versioned baseline, backs up the current catalogue and does not access the network or edit orders. Unknown models remain unselected; missing dimensions are not guessed; package and set quantities are not silently converted.
 
-原 `preview` 账号及其历史订单保留。内部采购员应使用管理员新派发的独立账号。历史记录不会根据客户名称自动分配给新账号。管理员仍使用服务器配置中的管理员凭据，首次迁移不会覆盖现有配置。
+## Tests
 
-本地验证方法见 [测试说明](tests/README.md)。
+```sh
+for test in tests/test_*.py; do
+  PYTHONDONTWRITEBYTECODE=1 python3 "$test" || exit 1
+done
+```
 
-## 历史订单复购
+The current **52 tests** cover retrieval, draft transitions, invalid quantities/dates, paste parsing, order ownership, role permissions, status changes, notification settings and deployment transport. They use temporary databases and mocked mail delivery, without submitting live orders or sending real email. See the [test notes](tests/README.md).
 
-采购员登录后，主界面的「从历史订单再来一单」会打开历史订单选择页。点击某笔订单的「再来一单」，把仍在目录中的商品、数量和备注带入采购车，交期清空后重新填写。不会自动提交或发信。已有采购车或商品草稿时先询问是否追加，取消不会覆盖现有内容。当前目录无法匹配的商品会明确提示，不会换成其他颜色或规格。
+## Cloud deployment
 
+Configure the local connection files in `.deploy/`, then run:
 
-## 智能粘贴采购内容
+```sh
+./deploy --dry-run  # Validate local sources only
+./deploy            # Upload, back up, restart and check
+```
 
-主界面的「智能粘贴」支持复制Excel多行多列，也支持含货号、数量、单位和日期的采购文字。可识别的Excel列名包括货号、品名、颜色、规格、数量、单位、交付日期、交期和备注；重复栏目会提示整理。
+See the [deployment guide](ops/DEPLOYMENT.md) and [SSH troubleshooting record](ops/SSH-REPAIR.md). The existing Compshare instance starts Ollama and the website at boot; full model-backed chat uses GPU mode. Source deployments preserve the server's order database, private configuration and model weights.
 
-只有一个日期时默认应用于没有单独交期的商品；多个日期时只保留有明确对应关系的交期，缺失处需补填。可批量只补空白交期，或明确选择统一全部交期。未写年份的日期按服务器当前年份识别并提示核对，过早日期不能导入。商品、数量、交期不全或单位不一致时，核对表会提示并阻止导入。
+## Order, email and access rules
 
-默认规则识别不调用模型。可勾选Qwen辅助拆分复杂文字；模型只能引用原文片段，再经过同一套目录与字段验证，不能编造货号或数量。无GPU或模型超时则保留规则结果供手动补全。模型实测需GPU实例；测试包含模拟模型响应和超时降级。
+- Each item requires a catalogue SKU, an integer quantity from 1 to 1,000,000 and a delivery date at least seven days ahead. An order has at most 100 lines. Actual delivery remains subject to sales confirmation.
+- Identical SKUs and dates may remain separate lines. Request IDs prevent network retries from creating duplicate orders.
+- Reordering copies available products, quantities and notes from the current buyer's own order, clears old delivery dates and requires review. It does not submit automatically.
+- A guest inquiry starts unconfirmed. Moving it to a later status creates a linked formal order in one database transaction. Undoing a status does not delete the order or recall email.
+- SMTP credentials are configured privately on the server. Sales can change the recipient and pause notifications; settings survive restarts. Pausing mail does not block order storage, and eligible queued jobs resume when enabled.
+- Customer names are bound to buyer accounts and enforced by the backend. Passwords use PBKDF2; failed logins trigger CAPTCHA and throttling. See the [access-control notes](ops/SECURITY.md) for the implemented limits.
 
-核对表可逐项改商品、数量、交期、备注或删除。确认后追加到原采购车，不覆盖商品草稿、不自动提交订单。同商品、同交期可以保留多条独立明细，各自保存数量和备注。每次最多100行、12000字。
+## Repository scope and project overview
 
+Business names, product information, source records and work logs are retained as written. Runtime databases, model weights, deployment private keys and SMTP credentials remain in local/server configuration and are managed separately.
 
-## 接单界面
-
-「AI 接单助手」和「智能粘贴」为并排的可折叠工具入口，双右箭头表示收起状态，双向下箭头表示展开状态。折叠保留对话、粘贴原文和核对表。桌面上「商品填写」和「采购车」左右排列，窄屏上下排列；单项商品先填写再加入采购车，最终整单提交。进度为选品与补全、核对采购车、提交订单（新客户为提交询价）。批量交期工具在核对表下面、确认勾选之前，日期、应用范围和应用按钮同排。
-
-助手快捷示例覆盖帽绳收紧、背包快拆、肩带调长、拉头抓握及T5安装工具。开始咨询其他商品、用途或明确说“咨询下一个商品”时，当前草稿商品、数量和有效交期齐全就自动加入采购车，保留备注与客户名称，并在聊天里提示。缺少字段则保留草稿并提醒补全；查询当前商品或修改数量不触发自动入车。重复咨询不会再次保存已清空的草稿，自动入车后立即保存浏览器恢复数据。
-
-采购车也提供批量修改期望交期，可统一全部商品交期或只填写空白交期。保留至少七天限制；统一交期后仍保留每条商品、数量和备注，不自动合并。批量控件不属于提交表单，未应用的日期不会影响已核对的商品提交。
-
-同商品同交期明细允许独立加入、粘贴导入、询价转单及Excel导出；旧库会在事务内移除旧唯一限制并保留原明细。提交请求标识继续防止网络重试重复创建订单。
-
-### 后台订单邮件通知
-
-销售后台的「订单邮件通知」卡片可启停通知、修改单个收件邮箱；拨片切换立即保存，修改邮箱后点击「保存邮箱」。设置存入订单数据库，重启或更新源码后保留；首次启用从服务器现有 `ORDER_RECIPIENT` 配置读取收件地址。采购员和未登录用户无法读取或修改该设置。
-
-关闭时订单仍照常保存，待发邮件暂停；重新启用后继续发送尚可重试的邮件，不重发已经发送成功的订单。新收件地址适用于尚未开始发送的邮件，正在发送的邮件使用领取任务时的地址。新客户询价仍由销售核对转为正式订单后进入原订单发信流程。SMTP 发件账号和应用密码继续仅保存在服务器私有配置中，后台不会显示这些凭据。并发修改会提示刷新，避免覆盖其他人的设置。
-
-### 销售后台摘要与状态
-
-「采购员订单」和「新客户询价」每笔显示一条摘要，点击「详情」打开居中卡片，背景变灰模糊。卡片内可查看商品、备注和交期；订单卡片提供 Excel 下载。新询价初始为「未确认订单」，首次改为已确认、已发货或已交付时自动生成正式订单，状态和询价关联在同一数据库事务中保存；之后两处共享正式订单状态。首次确认前可选填统一交期，留空保留各商品原交期。
-
-更改状态后可在当前页面撤销最近一次状态修改；使用原状态前置校验，其他销售已更改时拒绝覆盖。撤销不删除已生成的正式订单，不撤回已经发送的邮件。账号创建与重置密码统一为4–18位，既有密码继续有效，只有管理员可创建、重置和启停账号。
+[English project overview](https://jinghua-xi.github.io/projects/hualian-ordering.html) · [Personal website](https://jinghua-xi.github.io/)
