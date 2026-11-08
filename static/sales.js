@@ -1,4 +1,4 @@
-import {presentRecord, refreshRecord} from '/record-dialog.js?v=record-modal-1';
+import {presentRecord, refreshRecord, recordDeleteControl} from '/record-dialog.js?v=record-delete-1';
 
 const ordersTable = document.getElementById('orders-wrap');
 const orderRows = document.getElementById('orders');
@@ -112,66 +112,7 @@ function renderOrders() {
     [order.number, order.customer].some((value) => String(value ?? '').toLowerCase().includes(query))
   ) : orderHistory;
   orderRows.replaceChildren();
-  for (const order of orders) {
-    if (!customerHistory) {
-      orderRows.append(orderThread(order));
-      continue;
-    }
-    const created = new Date(order.created_at);
-    const items = Array.isArray(order.items) && order.items.length ? order.items : [order];
-    items.forEach((item, index) => {
-      const row = document.createElement('tr');
-      if (index === 0) {
-        const identity = [cell(order.number), cell(order.customer)];
-        identity.forEach((node) => { node.rowSpan = items.length; });
-        row.append(...identity);
-      }
-      const product = cell(item.name, item.manufacturer_sku || item.sku);
-      if (item.note) {
-        const note = document.createElement('small');
-        note.className = 'item-note';
-        note.textContent = `备注：${item.note}`;
-        product.append(note);
-      }
-      row.append(
-        product,
-        cell(item.spec, item.color),
-        cell(`${numberFormat.format(item.quantity)} ${item.unit}`),
-        cell(item.delivery_date || '—'),
-      );
-      if (index === 0) {
-        const summary = [
-          cell(Number.isNaN(created.getTime()) ? order.created_at : dateFormat.format(created)),
-          statusCell(order),
-        ];
-        if (customerHistory) {
-          const action = cell('');
-          const repeat = document.createElement('a');
-          repeat.className = 'button secondary';
-          repeat.href = `/?reorder=${encodeURIComponent(order.number)}`;
-          repeat.textContent = '再来一单';
-          repeat.setAttribute('aria-label', `订单 ${order.number} 再来一单`);
-          action.append(repeat);
-          summary.push(action);
-        }
-        if (!customerHistory) {
-          const email = cell(emailStatuses[order.email_status] ?? '—');
-          if (order.number) {
-            const line = document.createElement('small');
-            const download = document.createElement('a');
-            download.href = `./orders/${encodeURIComponent(order.number)}.xlsx`;
-            download.textContent = '下载 Excel';
-            line.append(download);
-            email.append(line);
-          }
-          summary.push(email);
-        }
-        summary.forEach((node) => { node.rowSpan = items.length; });
-        row.append(...summary);
-      }
-      orderRows.append(row);
-    });
-  }
+  for (const order of orders) orderRows.append(orderThread(order));
   ordersTable.hidden = orders.length === 0;
   emptyState.hidden = orders.length !== 0;
   emptyState.textContent = query && orderHistory.length ? '没有找到匹配的订单。' : noOrders;
@@ -202,22 +143,36 @@ function orderThread(order) {
   const reference = add('p', `订单号：${order.number} · 客户：${order.customer}`, 'thread-reference');
   content.append(reference);
   const toolbar = add('div', '', 'thread-toolbar');
-  const statusLabel = add('label', '订单状态', 'thread-status-control');
   const feedback = add('p', '', 'inline-error'); feedback.setAttribute('role', 'status');
-  const status = statusCell(order, feedback);
-  while (status.firstChild) statusLabel.append(status.firstChild);
-  const undo = add('button', '撤销本次修改', 'button secondary undo-order-status'); undo.type = 'button';
-  undo.dataset.orderNumber = order.number;
-  const edit = statusEdits.get(order.number); undo.hidden = !edit || edit.current !== order.status;
-  undo.onclick = () => {
-    const latest = statusEdits.get(order.number);
-    if (!latest || latest.current !== order.status) return;
-    const select = statusLabel.querySelector('select'); select.value = latest.previous;
-    void saveStatus(order, select, feedback, true);
-  };
-  toolbar.append(statusLabel, undo, add('span', `邮件通知：${emailStatuses[order.email_status] ?? '—'}`, 'thread-mail'));
-  const download = add('a', '下载 Excel', 'button secondary');
-  download.href = `./orders/${encodeURIComponent(order.number)}.xlsx`; toolbar.append(download); content.append(toolbar);
+  if (customerHistory) {
+    toolbar.append(add('span', `订单状态：${order.status}`, 'thread-customer-status'));
+    const repeat = add('a', '再来一单', 'button secondary repeat-order');
+    repeat.href = `/?reorder=${encodeURIComponent(order.number)}`;
+    repeat.setAttribute('aria-label', `订单 ${order.number} 再来一单`);
+    toolbar.append(repeat); content.append(toolbar);
+  } else {
+    const statusLabel = add('label', '订单状态', 'thread-status-control');
+    const status = statusCell(order, feedback);
+    while (status.firstChild) statusLabel.append(status.firstChild);
+    const undo = add('button', '撤销本次修改', 'button secondary undo-order-status'); undo.type = 'button';
+    undo.dataset.orderNumber = order.number;
+    const edit = statusEdits.get(order.number); undo.hidden = !edit || edit.current !== order.status;
+    undo.onclick = () => {
+      const latest = statusEdits.get(order.number);
+      if (!latest || latest.current !== order.status) return;
+      const select = statusLabel.querySelector('select'); select.value = latest.previous;
+      void saveStatus(order, select, feedback, true);
+    };
+    toolbar.append(statusLabel, undo, add('span', `邮件通知：${emailStatuses[order.email_status] ?? '—'}`, 'thread-mail'));
+    const download = add('a', '下载 Excel', 'button secondary');
+    download.href = `./orders/${encodeURIComponent(order.number)}.xlsx`; toolbar.append(download); content.append(toolbar);
+    content.append(recordDeleteControl({kind:'order', number:order.number, status:() => order.status, onDeleted:async () => {
+      statusEdits.delete(order.number);
+      await loadOrders();
+      statusNotice.textContent = `已删除订单 ${order.number}，数据库保留留档。`;
+      refresh.focus();
+    }}));
+  }
   const wrap = add('div', '', 'thread-items-wrap'); wrap.tabIndex = 0; wrap.setAttribute('aria-label', `订单 ${order.number} 商品明细，可横向滚动`);
   const table = add('table', '', 'thread-items');
   const caption = add('caption', `订单 ${order.number} 商品明细`, 'sr-only'); table.append(caption);
@@ -234,7 +189,7 @@ function orderThread(order) {
     body.append(row);
   }
   table.append(body); wrap.append(table); content.append(feedback, wrap);
-  toggle.onclick = () => presentRecord({number:order.number, title:'采购员订单详情', content, trigger:toggle});
+  toggle.onclick = () => presentRecord({number:order.number, title:customerHistory?'我的订单详情':'采购员订单详情', content, trigger:toggle});
   refreshRecord(order.number, content);
   return thread;
 }
@@ -270,4 +225,4 @@ refresh.addEventListener('click', () => void loadOrders());
 search.addEventListener('input', renderOrders);
 void loadOrders();
 
-if(customerHistory && new URLSearchParams(location.search).get('reorder')==='1') document.querySelector('.sales-hero p').textContent='选择一笔历史订单，点击「再来一单」。商品和数量会带入采购车，交期需重新填写。';
+if(customerHistory && new URLSearchParams(location.search).get('reorder')==='1') document.querySelector('.sales-hero p').textContent='选择一笔历史订单，打开「详情」后点击「再来一单」。商品和数量会带入采购车，交期需重新填写。';

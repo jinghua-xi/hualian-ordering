@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#ffffff">
   <title>历史订单 · 华联服装辅料福州分公司</title>
-  <link rel="stylesheet" href="../styles.css?v=catalog-100-1">
-  <script type="module" src="../sales.js?v=catalog-100-1"></script>
+  <link rel="stylesheet" href="../styles.css?v=order-workflow-2">
+  <script type="module" src="../sales.js?v=record-delete-1"></script>
 </head>
 <body data-order-history="customer">
   <header class="topbar">
@@ -23,7 +23,7 @@
       <div class="hero-copy">
         <div class="eyebrow">我的账户</div>
         <h1>历史订单</h1>
-        <p>查看自己的订单，点击「再来一单」复制商品和数量，重新选择交期后提交。</p>
+        <p>查看自己的订单，打开「详情」后可选择「再来一单」，复制商品和数量并重新填写交期。</p>
       </div>
     </section>
     <section class="panel sales-panel" aria-labelledby="sales-title">
@@ -39,13 +39,8 @@
         </div>
       </div>
       <p id="sales-error" class="inline-error" role="alert" hidden></p>
-      <div class="orders-wrap" id="orders-wrap" tabindex="0" aria-label="订单列表，可横向滚动" hidden>
-        <table class="orders-table">
-          <thead>
-            <tr><th scope="col">订单号</th><th scope="col">客户</th><th scope="col">商品与货号</th><th scope="col">规格与颜色</th><th scope="col">数量</th><th scope="col">期望交付</th><th scope="col">提交时间</th><th scope="col">状态</th><th scope="col">再次采购</th></tr>
-          </thead>
-          <tbody id="orders"></tbody>
-        </table>
+      <div id="orders-wrap" hidden>
+        <div id="orders" class="record-list"></div>
       </div>
       <p id="orders-empty" class="empty-orders" hidden>当前账号还没有历史订单。提交试单后，可以在这里查看。</p>
     </section>

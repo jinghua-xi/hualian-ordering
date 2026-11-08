@@ -14,9 +14,9 @@ An AI-assisted B2B ordering prototype for Hualian Garment Accessories, Fuzhou. I
 - **Drafts and carts:** editable quantities, per-item delivery dates and notes of up to 100 characters. A completed draft is automatically saved to the cart when the customer starts another product inquiry; incomplete drafts are retained with a reminder. Includes bulk date editing and browser-session recovery.
 - **Smart paste:** parse procurement text or rows copied from Excel. Rules run first; Qwen assistance is enabled by default and can help split complex text when a GPU is available. Model failures preserve rule-based results for review. Supports shared dates and separate per-item dates.
 - **Buyer and guest workflows:** internally issued buyer accounts see only their own orders and can reorder. New customers submit an inquiry without an account and provide at least one contact method.
-- **Sales and administration:** sales staff review inquiries and buyer orders, update four order statuses, undo the latest status change and export Excel. Only administrators manage accounts and bound customer names.
+- **Sales and administration:** sales staff review inquiries and buyer orders, update four order statuses, undo the latest status change and export Excel. Staff can remove orders and inquiries with a second confirmation; records and deletion audits remain stored, linked records are preserved, and unsent notifications stop for removed orders. Only administrators manage accounts and bound customer names.
 - **Order notifications:** China-time timestamps and daily sequential order IDs, Excel workbooks and a retryable SMTP outbox. Sales can pause notifications and change the recipient.
-- **Deployment and validation:** one SSH command validates, backs up, uploads, restarts and checks the application, with an attempted source rollback on failure. The current regression suite contains 52 tests.
+- **Deployment and validation:** one SSH command validates, backs up, uploads, restarts and checks the application, with an attempted source rollback on failure. The current regression suite contains 60 tests.
 
 ## Stack and request flow
 
@@ -81,7 +81,7 @@ for test in tests/test_*.py; do
 done
 ```
 
-The current **52 tests** cover retrieval, draft transitions, invalid quantities/dates, paste parsing, order ownership, role permissions, status changes, notification settings and deployment transport. They use temporary databases and mocked mail delivery, without submitting live orders or sending real email. See the [test notes](tests/README.md).
+The current **60 tests** cover retrieval, draft transitions, invalid quantities/dates, paste parsing, order ownership, role permissions, status changes, record deletion and its permission/notification boundaries, notification settings and deployment transport. They use temporary databases and mocked mail delivery, without submitting live orders or sending real email. See the [test notes](tests/README.md).
 
 ## Cloud deployment
 

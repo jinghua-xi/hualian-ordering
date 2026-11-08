@@ -57,3 +57,44 @@ export function presentRecord({number, title, content, trigger}) {
 export function refreshRecord(number, content) {
   if (dialog?.open && dialog.dataset.recordNumber === number) dialogBody.replaceChildren(content);
 }
+
+export function recordDeleteControl({kind, number, status, onDeleted}) {
+  const label = kind === 'order' ? '订单' : '询价';
+  const route = kind === 'order' ? 'orders' : 'inquiries';
+  const control = document.createElement('div'); control.className = 'record-delete-control';
+  const start = document.createElement('button'); start.type = 'button';
+  start.className = 'button secondary record-delete-trigger'; start.textContent = `删除${label}`;
+  const confirmation = document.createElement('div'); confirmation.className = 'record-delete-confirmation';
+  confirmation.hidden = true; confirmation.setAttribute('role', 'group'); confirmation.setAttribute('aria-label', '删除确认');
+  const warning = document.createElement('p');
+  warning.textContent = `确认删除${label} ${number}？记录将从列表移除，数据库保留留档。` +
+    (kind === 'order' ? '尚未发送的通知将停止，已发送邮件无法撤回；关联询价保留。' : '关联的正式订单保留，不会一起删除。');
+  const confirm = document.createElement('button'); confirm.type = 'button';
+  confirm.className = 'button record-delete-confirm'; confirm.textContent = `确认删除${label}`;
+  const cancel = document.createElement('button'); cancel.type = 'button';
+  cancel.className = 'button secondary'; cancel.textContent = '取消';
+  const error = document.createElement('p'); error.className = 'inline-error'; error.hidden = true; error.setAttribute('role', 'alert');
+  confirmation.append(warning, confirm, cancel, error); control.append(start, confirmation);
+  let expectedStatus;
+  start.onclick = () => {
+    expectedStatus = status(); start.hidden = true; confirmation.hidden = false; error.hidden = true; cancel.focus();
+  };
+  cancel.onclick = () => { confirmation.hidden = true; start.hidden = false; start.focus(); };
+  confirm.onclick = async () => {
+    confirm.disabled = true; cancel.disabled = true; error.hidden = true;
+    try {
+      const response = await fetch(`/api/sales/${route}/${encodeURIComponent(number)}/delete`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({confirm_number:number, expected_status:expectedStatus}),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.deleted !== true) throw new Error(result.error || '删除失败，请刷新后重试。');
+      if (dialog?.open && dialog.dataset.recordNumber === number) dialog.close();
+      await onDeleted();
+      document.dispatchEvent(new CustomEvent('sales-record-deleted', {detail:{kind, number}}));
+    } catch (failure) {
+      error.textContent = failure.message || '删除失败，请稍后重试。'; error.hidden = false;
+    } finally { confirm.disabled = false; cancel.disabled = false; }
+  };
+  return control;
+}

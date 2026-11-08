@@ -151,6 +151,7 @@ SALES_ROUTES = {"/accounts/", "/api/admin/accounts", "/api/sales/email-settings"
 ORDER_NUMBER = r"HL-FZ-[0-9]{8}-(?:[0-9]{4}|[0-9A-F]{12})"
 SALES_XLSX_ROUTE = re.compile(rf"/sales/orders/({ORDER_NUMBER})\.xlsx")
 SALES_STATUS_ROUTE = re.compile(rf"/api/sales/orders/({ORDER_NUMBER})/status")
+SALES_DELETE_ROUTE = re.compile(rf"/api/sales/(orders|inquiries)/({ORDER_NUMBER}|XJ-FZ-[0-9]{{8}}-[0-9]{{4}})/delete")
 INITIAL_ORDER_STATUS = "未确认订单"
 CONFIRMED_ORDER_STATUS = "已确认订单"
 ORDER_STATUSES = (INITIAL_ORDER_STATUS, CONFIRMED_ORDER_STATUS, "已发货", "已交付")
@@ -1119,6 +1120,10 @@ def init_db():
         if not any(column["name"] == "owner_account" for column in db.execute("PRAGMA table_info(orders)")):
             db.execute("ALTER TABLE orders ADD COLUMN owner_account TEXT")
         db.execute("CREATE INDEX IF NOT EXISTS orders_by_owner ON orders (owner_account, created_at DESC)")
+        db.execute("""CREATE TABLE IF NOT EXISTS record_deletions (
+            kind TEXT NOT NULL CHECK (kind IN ('order', 'inquiry')), number TEXT NOT NULL,
+            deleted_at TEXT NOT NULL, deleted_by TEXT NOT NULL, PRIMARY KEY (kind, number)
+        )""")
         db.execute("""
             CREATE TABLE IF NOT EXISTS order_items (
                 order_number TEXT NOT NULL REFERENCES orders(number),
@@ -1170,6 +1175,12 @@ def init_db():
 ORDER_COLUMNS = "number, customer, sku, name, category, color, spec, unit, quantity, created_at, status"
 ITEM_FIELDS = ("sku", "name", "category", "color", "spec", "unit", "quantity")
 ITEM_COLUMNS = ", ".join((*ITEM_FIELDS, "delivery_date", "note"))
+VISIBLE_ORDERS = "NOT EXISTS (SELECT 1 FROM record_deletions d WHERE d.kind='order' AND d.number=orders.number)"
+VISIBLE_INQUIRIES = "NOT EXISTS (SELECT 1 FROM record_deletions d WHERE d.kind='inquiry' AND d.number=i.number)"
+
+
+def record_deleted(db, kind, number):
+    return db.execute("SELECT 1 FROM record_deletions WHERE kind=? AND number=?", (kind, number)).fetchone() is not None
 
 
 def notification_settings(db=None):
@@ -1301,6 +1312,8 @@ def save_order(body, owner_account=None, *, db=None, initial_status=INITIAL_ORDE
             previous = dict(previous)
             if previous.pop("owner_account") != owner_account:
                 raise RequestError(409, "这个提交标识已有订单，请重新确认后提交。")
+            if record_deleted(db, "order", previous["number"]):
+                raise RequestError(409, "这笔订单已删除，请重新发起采购。")
             order = order_result(db, previous)
             old_lines = [(line["sku"], line["quantity"], line["delivery_date"], line["note"]) for line in order["items"]]
             if previous["customer"] != customer or sorted(old_lines) != sorted(lines):
@@ -1386,6 +1399,8 @@ def save_inquiry(body):
         db.execute("BEGIN IMMEDIATE")
         previous = db.execute("SELECT number,payload FROM inquiries WHERE request_id=?", (request_id,)).fetchone()
         if previous:
+            if record_deleted(db, "inquiry", previous["number"]):
+                raise RequestError(409, "这笔询价已删除，请重新发起询价。")
             if previous["payload"] != payload:
                 raise RequestError(409, "提交标识已使用，请重新提交。")
             return previous["number"], False
@@ -1402,10 +1417,12 @@ def save_inquiry(body):
 
 def convert_inquiry(number, body, *, db=None, initial_status=INITIAL_ORDER_STATUS):
     with order_transaction(db) as db:
-        row = db.execute("SELECT * FROM inquiries WHERE number=?", (number,)).fetchone()
+        row = db.execute(f"SELECT i.* FROM inquiries i WHERE number=? AND {VISIBLE_INQUIRIES}", (number,)).fetchone()
         if not row:
             raise RequestError(404, "询价不存在。")
         if row["order_number"]:
+            if record_deleted(db, "order", row["order_number"]):
+                raise RequestError(409, "关联订单已删除，不能再次转单或修改状态。")
             existing = db.execute(f"SELECT {ORDER_COLUMNS} FROM orders WHERE number=?", (row["order_number"],)).fetchone()
             if existing is None:
                 raise RequestError(409, "关联订单不存在，请刷新后联系管理员。")
@@ -1428,10 +1445,12 @@ def update_inquiry_status(number, body):
     if not isinstance(status, str) or status not in ORDER_STATUSES or not isinstance(expected, str) or expected not in ORDER_STATUSES:
         raise RequestError(400, "请选择有效的订单状态。")
     with order_transaction() as db:
-        row = db.execute("""SELECT i.order_number,o.status FROM inquiries i
-            LEFT JOIN orders o ON o.number=i.order_number WHERE i.number=?""", (number,)).fetchone()
+        row = db.execute(f"""SELECT i.order_number,o.status FROM inquiries i
+            LEFT JOIN orders o ON o.number=i.order_number WHERE i.number=? AND {VISIBLE_INQUIRIES}""", (number,)).fetchone()
         if row is None:
             raise RequestError(404, "询价不存在。")
+        if row["order_number"] and record_deleted(db, "order", row["order_number"]):
+            raise RequestError(409, "关联订单已删除，不能修改状态。")
         if row["order_number"] and row["status"] is None:
             raise RequestError(409, "关联订单不存在，请刷新后联系管理员。")
         current = LEGACY_ORDER_STATUSES.get(row["status"], row["status"]) if row["order_number"] else INITIAL_ORDER_STATUS
@@ -1450,20 +1469,20 @@ def update_inquiry_status(number, body):
 
 def sales_orders():
     with closing(connect_db()) as db:
-        return [order_result(db, row) for row in db.execute(f"SELECT {ORDER_COLUMNS} FROM orders ORDER BY created_at DESC, rowid DESC")]
+        return [order_result(db, row) for row in db.execute(f"SELECT {ORDER_COLUMNS} FROM orders WHERE {VISIBLE_ORDERS} ORDER BY created_at DESC, rowid DESC")]
 
 
 def customer_orders(owner_account):
     with closing(connect_db()) as db:
         rows = db.execute(f"""
-            SELECT {ORDER_COLUMNS} FROM orders WHERE owner_account = ? ORDER BY created_at DESC, rowid DESC
+            SELECT {ORDER_COLUMNS} FROM orders WHERE owner_account = ? AND {VISIBLE_ORDERS} ORDER BY created_at DESC, rowid DESC
         """, (owner_account,))
         return [order_result(db, row, include_email=False) for row in rows]
 
 
 def repeat_order(number, owner_account):
     with closing(connect_db()) as db:
-        row = db.execute(f"SELECT {ORDER_COLUMNS} FROM orders WHERE number=? AND owner_account=?", (number, owner_account)).fetchone()
+        row = db.execute(f"SELECT {ORDER_COLUMNS} FROM orders WHERE number=? AND owner_account=? AND {VISIBLE_ORDERS}", (number, owner_account)).fetchone()
         if not row:
             raise RequestError(404, "未找到当前账号的这笔订单。")
         order = order_result(db, row, include_email=False)
@@ -1484,7 +1503,7 @@ def repeat_order(number, owner_account):
 
 def find_order(number):
     with closing(connect_db()) as db:
-        row = db.execute(f"SELECT {ORDER_COLUMNS} FROM orders WHERE number = ?", (number,)).fetchone()
+        row = db.execute(f"SELECT {ORDER_COLUMNS} FROM orders WHERE number = ? AND {VISIBLE_ORDERS}", (number,)).fetchone()
         return order_result(db, row) if row else None
 
 
@@ -1495,7 +1514,7 @@ def update_order_status(number, body):
         raise RequestError(400, "请选择有效的订单状态。")
     with closing(connect_db()) as db, db:
         db.execute("BEGIN IMMEDIATE")
-        row = db.execute("SELECT status FROM orders WHERE number = ?", (number,)).fetchone()
+        row = db.execute(f"SELECT status FROM orders WHERE number = ? AND {VISIBLE_ORDERS}", (number,)).fetchone()
         if row is None:
             raise RequestError(404, "未找到订单。")
         current = LEGACY_ORDER_STATUSES.get(row["status"], row["status"])
@@ -1506,6 +1525,34 @@ def update_order_status(number, body):
     return status
 
 
+def delete_record(kind, number, body, actor):
+    """Hide a record atomically, retaining its contents, identifier and audit trail."""
+    if body.get("confirm_number") != number or not isinstance(body.get("expected_status"), str):
+        raise RequestError(400, "请确认要删除的记录编号及当前状态。")
+    with order_transaction() as db:
+        if kind == "order":
+            row = db.execute("SELECT status FROM orders WHERE number=?", (number,)).fetchone()
+        else:
+            row = db.execute("""SELECT o.status FROM inquiries i LEFT JOIN orders o
+                ON o.number=i.order_number WHERE i.number=?""", (number,)).fetchone()
+        if row is None:
+            raise RequestError(404, "记录不存在。")
+        if record_deleted(db, kind, number):
+            return {"number": number, "deleted": True}
+        status = LEGACY_ORDER_STATUSES.get(row["status"], row["status"]) or INITIAL_ORDER_STATUS
+        if body["expected_status"] != status:
+            raise RequestError(409, "记录状态已被更新，请刷新详情后再删除。")
+        if kind == "order":
+            job = db.execute("SELECT status,lease_until FROM order_email_outbox WHERE order_number=?", (number,)).fetchone()
+            if job and job["status"] != "sent" and job["lease_until"] > int(time.time()):
+                raise RequestError(409, "订单邮件正在发送，请稍后再删除；已发送邮件无法撤回。")
+            db.execute("""UPDATE order_email_outbox SET retryable=0,lease_until=0,lease_token=''
+                WHERE order_number=? AND status!='sent'""", (number,))
+        db.execute("INSERT INTO record_deletions VALUES (?,?,?,?)",
+                   (kind, number, china_now().isoformat(timespec="seconds"), actor))
+    return {"number": number, "deleted": True}
+
+
 def claim_order_email():
     now = int(time.time())
     with closing(connect_db()) as db, db:
@@ -1514,9 +1561,10 @@ def claim_order_email():
             return None
         recipient = notification_settings(db)["recipient"]
         job = db.execute("""
-            SELECT order_number, attempts FROM order_email_outbox
-            WHERE status != 'sent' AND retryable = 1 AND attempts < ? AND next_attempt_at <= ? AND lease_until <= ?
-            ORDER BY next_attempt_at, rowid LIMIT 1
+            SELECT q.order_number, q.attempts FROM order_email_outbox q
+            WHERE q.status != 'sent' AND q.retryable = 1 AND q.attempts < ? AND q.next_attempt_at <= ? AND q.lease_until <= ?
+            AND NOT EXISTS (SELECT 1 FROM record_deletions d WHERE d.kind='order' AND d.number=q.order_number)
+            ORDER BY q.next_attempt_at, q.rowid LIMIT 1
         """, (MAX_EMAIL_ATTEMPTS, now, now)).fetchone()
         if job is None:
             return None
@@ -1537,7 +1585,11 @@ def deliver_next_order_email():
     status = "sent"
     retryable = False
     try:
-        send_order_email(find_order(number), recipient=recipient)
+        order = find_order(number)
+        if order is not None:
+            send_order_email(order, recipient=recipient)
+        else:
+            status = "failed"
     except DeliveryError as error:
         status, retryable = "failed", error.retryable
         print(f"Order email {number}: {error}", file=sys.stderr, flush=True)
@@ -1905,7 +1957,7 @@ class OrderingHandler(BaseHTTPRequestHandler):
             guest_route = path in ("/api/guest/catalog", "/api/guest/time", "/api/guest/chat", "/api/guest/inquiries", "/api/guest/paste")
             public_route = (guest_route or (self.command == "GET" and path == "/" and parse_qs(urlsplit(self.path).query).get("guest") == ["1"]) or(self.command == "GET" and path in PUBLIC_STATIC_ROUTES)
                             or (self.command == "POST" and path == "/logout"))
-            if path in SALES_ROUTES or re.fullmatch(r"/api/sales/inquiries/[^/]+/(?:convert|status)", path) or SALES_XLSX_ROUTE.fullmatch(path) or SALES_STATUS_ROUTE.fullmatch(path):
+            if path in SALES_ROUTES or re.fullmatch(r"/api/sales/(?:inquiries|orders)/[^/]+/(?:convert|status|delete)", path) or SALES_XLSX_ROUTE.fullmatch(path) or SALES_STATUS_ROUTE.fullmatch(path):
                 if not self.authorized(path, "sales"):
                     return
             elif PREVIEW_PASSWORD and not public_route and not self.authorized(path, "preview"):
@@ -1943,12 +1995,15 @@ class OrderingHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/sales/inquiries":
             with closing(connect_db()) as db:
-                rows = [dict(r) for r in db.execute("""SELECT i.number,i.payload,i.created_at,i.order_number,o.status AS order_status
-                    FROM inquiries i LEFT JOIN orders o ON o.number=i.order_number ORDER BY i.created_at DESC,i.rowid DESC""")]
+                rows = [dict(r) for r in db.execute(f"""SELECT i.number,i.payload,i.created_at,i.order_number,o.status AS order_status,
+                    EXISTS (SELECT 1 FROM record_deletions d WHERE d.kind='order' AND d.number=i.order_number) AS order_deleted
+                    FROM inquiries i LEFT JOIN orders o ON o.number=i.order_number WHERE {VISIBLE_INQUIRIES}
+                    ORDER BY i.created_at DESC,i.rowid DESC""")]
             for row in rows:
                 row["payload"] = json.loads(row["payload"])
                 order_status = row.pop("order_status")
                 row["status"] = LEGACY_ORDER_STATUSES.get(order_status, order_status) or INITIAL_ORDER_STATUS
+                row["order_deleted"] = bool(row["order_deleted"])
             self.send_json(200, {"inquiries": rows, "statuses": ORDER_STATUSES})
             return
         if path == "/api/catalog":
@@ -1990,6 +2045,13 @@ class OrderingHandler(BaseHTTPRequestHandler):
         self.route(self.post_route)
 
     def post_route(self, path):
+        deletion = SALES_DELETE_ROUTE.fullmatch(path)
+        if deletion:
+            if self.account_role not in ("sales", "admin"):
+                raise RequestError(403, "只有销售和管理员可以删除后台记录。")
+            kind = "order" if deletion[1] == "orders" else "inquiry"
+            self.send_json(200, delete_record(kind, deletion[2], self.read_json(2048), self.account))
+            return
         if path == "/api/sales/email-settings":
             self.send_json(200, update_notification_settings(self.read_json(2048), self.account or SALES_USER))
             return

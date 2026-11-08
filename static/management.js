@@ -1,4 +1,4 @@
-import {presentRecord, refreshRecord} from '/record-dialog.js?v=record-modal-1';
+import {presentRecord, refreshRecord, recordDeleteControl} from '/record-dialog.js?v=record-delete-1';
 
 async function api(path, body) {
   const response = await fetch(path, body === undefined ? {cache:'no-store'} : {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -67,7 +67,7 @@ async function inquiries(){
    const customer=text('span',inquiry.payload.customer);customer.className='thread-customer';customer.title=inquiry.payload.customer;
    const count=text('span',`${items.length} 项商品`);count.className='thread-count';
    const created=new Date(inquiry.created_at);const submitted=text('span',Number.isNaN(created.getTime())?inquiry.created_at:inquiryDateFormat.format(created));submitted.className='thread-date';
-   const state=text('span',inquiry.status||'未确认订单');state.className='thread-state';
+   const state=text('span',inquiry.order_deleted?'关联订单已删除':inquiry.status||'未确认订单');state.className='thread-state';
    const toggle=text('button','详情');toggle.type='button';toggle.className='thread-toggle';toggle.setAttribute('aria-haspopup','dialog');toggle.setAttribute('aria-label',`查看询价 ${inquiry.number} 详情`);
    summary.append(number,customer,count,submitted,state,toggle);thread.append(summary);
    const content=document.createElement('div');content.className='thread-content';
@@ -97,9 +97,9 @@ async function inquiries(){
    const select=document.createElement('select');select.className='inquiry-status';select.setAttribute('aria-label',`询价 ${inquiry.number} 的订单状态`);
    const current=inquiry.status||'未确认订单';
    for(const value of result.statuses||['未确认订单','已确认订单','已发货','已交付'])select.append(new Option(value,value));
-   select.value=current;statusLabel.append(select);actions.append(statusLabel);
+   select.value=current;select.disabled=inquiry.order_deleted;statusLabel.append(select);actions.append(statusLabel);
    const undo=text('button','撤销本次修改');undo.type='button';undo.className='button secondary';
-   const lastEdit=inquiryStatusEdits.get(inquiry.number);undo.hidden=!lastEdit||lastEdit.current!==current;actions.append(undo);form.append(actions);
+   const lastEdit=inquiryStatusEdits.get(inquiry.number);undo.hidden=inquiry.order_deleted||!lastEdit||lastEdit.current!==current;actions.append(undo);form.append(actions);
    let adjustment=null,date=null;
    if(!inquiry.order_number){
     adjustment=document.createElement('details');adjustment.className='inquiry-date-adjustment';adjustment.append(text('summary','统一调整交期（选填）'));
@@ -108,10 +108,11 @@ async function inquiries(){
     const hint=text('p','首次改变状态时应用此交期，覆盖所有商品交期，至少预留7天。');hint.className='field-hint';adjustment.append(hint);
     adjustment.addEventListener('toggle',()=>{date.disabled=!adjustment.open;if(!adjustment.open)date.value='';});form.append(adjustment);
    }
-   const explanation=text('p',inquiry.order_number?`正式订单：${inquiry.order_number}。状态与采购员订单同步；撤销只恢复状态。`:'改为已确认、已发货或已交付时生成正式订单，默认沿用各商品原交期。');explanation.className='inquiry-status-help';form.append(explanation);
+   const explanation=text('p',inquiry.order_deleted?`关联订单 ${inquiry.order_number} 已删除，不能再次转单或修改状态；本询价保留。`:inquiry.order_number?`正式订单：${inquiry.order_number}。状态与采购员订单同步；撤销只恢复状态。`:'改为已确认、已发货或已交付时生成正式订单，默认沿用各商品原交期。');explanation.className='inquiry-status-help';form.append(explanation);
    const message=text('p',inquiryStatusMessages.get(inquiry.number)||'');message.className='inquiry-status-message';message.setAttribute('role','status');form.append(message);
    const localError=text('p','');localError.className='inline-error';localError.setAttribute('role','alert');localError.hidden=true;form.append(localError);
    async function persistStatus(isUndo=false){
+    if(inquiry.order_deleted)return;
     const edit=inquiryStatusEdits.get(inquiry.number);
     if(isUndo&&(!edit||edit.current!==current))return;
     if(!form.reportValidity()){select.value=current;return;}
@@ -129,6 +130,12 @@ async function inquiries(){
    }
    select.onchange=()=>void persistStatus();undo.onclick=()=>void persistStatus(true);
    content.insertBefore(form,wrap);
+   content.insertBefore(recordDeleteControl({kind:'inquiry',number:inquiry.number,status:()=>inquiry.status||'未确认订单',onDeleted:async()=>{
+    inquiryStatusEdits.delete(inquiry.number);inquiryStatusMessages.delete(inquiry.number);
+    await inquiries();
+    document.getElementById('inquiry-notice').textContent=`已删除询价 ${inquiry.number}，关联订单不受影响。`;
+    document.getElementById('refresh-inquiries').focus();
+   }}),wrap);
    toggle.onclick=()=>presentRecord({number:inquiry.number,title:'新客户询价详情',content,trigger:toggle});
    refreshRecord(inquiry.number,content);rows.append(thread);
   }
@@ -138,6 +145,7 @@ async function inquiries(){
 }
 if(inquiryList){
  document.getElementById('refresh-inquiries').onclick=()=>void inquiries();
+ document.addEventListener('sales-record-deleted',event=>{if(event.detail.kind==='order')void inquiries();});
  void inquiries();
 }
 

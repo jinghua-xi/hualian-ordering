@@ -10,6 +10,12 @@ const quantityInput = byId('quantity');
 const dateInput = byId('delivery-date');
 const noteInput = byId('item-note');
 const customerInput = byId('customer');
+customerInput.readOnly = !guestMode;
+byId('customer-binding-hint').hidden = guestMode;
+if (!guestMode) {
+  customerInput.setAttribute('aria-describedby', 'customer-binding-hint');
+  document.querySelector('label[for="customer"]').textContent = '客户名称（与账号绑定）';
+}
 const draftForm = byId('draft-form');
 const addItem = byId('add-item');
 const clearItem = byId('clear-draft');
@@ -52,6 +58,7 @@ let submitting = false;
 let submitted = false;
 let accountCustomer = '';
 let notePromptedFor = '';
+let reorderNoticeTimer;
 
 function todayInChina(now = new Date()) {
   const date = Object.fromEntries(chinaDate.formatToParts(now).map(({ type, value }) => [type, value]));
@@ -713,6 +720,7 @@ async function submitCart(event) {
     const { order } = await request(guestMode ? '/api/guest/inquiries' : '/api/orders', { ...payload, request_id: requestId });
     if (!order?.number) throw new Error('暂时无法确认订单号，请用相同信息重试。');
     submitted = true;
+    resetOrderTools();
     saveWorkspace();
     renderDraft();
     showReceipt(order);
@@ -805,18 +813,13 @@ submitOrder.addEventListener('click', (event) => {
   if (orderForm.reportValidity()) void submitCart(event);
 });
 byId('new-order').addEventListener('click', () => {
-  history = [];
+  resetOrderTools();
   cart.length = 0;
   requestIds.clear();
   clearDraft();
-  catalogContext = null;
   submitted = false;
-  messages.replaceChildren();
-  appendMessage('assistant', greeting);
-  chatMessage.value = '';
-  renderChoices(examples);
-  byId('chat-source').textContent = '对话接单';
   orderForm.reset();
+  if (accountCustomer) customerInput.value = accountCustomer;
   orderWorkspace.hidden = false;
   receipt.hidden = true;
   cartFeedback();
@@ -855,8 +858,19 @@ async function loadRepeatOrder() {
   const number = new URLSearchParams(location.search).get('reorder');
   if (!number) return;
   const notice = byId('reorder-notice');
-  notice.hidden = false;
-  const say = message => { notice.replaceChildren(); const p=document.createElement('p'); p.textContent=message; notice.append(p); };
+  const dismiss = () => {
+    clearTimeout(reorderNoticeTimer); notice.hidden = true;
+    const url=new URL(location.href);url.searchParams.delete('reorder');window.history.replaceState(null,'',url);
+  };
+  const say = (message, autoHide = false) => {
+    clearTimeout(reorderNoticeTimer); notice.replaceChildren(); notice.hidden = false;
+    const p=document.createElement('p');p.textContent=message;
+    const close=document.createElement('button');close.type='button';close.className='reorder-toast-close';close.textContent='×';close.setAttribute('aria-label','关闭复购提示');close.onclick=dismiss;
+    notice.append(p,close);
+    notice.onpointerenter=()=>clearTimeout(reorderNoticeTimer);
+    notice.onfocusin=()=>clearTimeout(reorderNoticeTimer);
+    if(autoHide)reorderNoticeTimer=setTimeout(()=>{notice.hidden=true;},8000);
+  };
   try {
     const previous = await request(`/api/orders/${encodeURIComponent(number)}/repeat`);
     const warnings = previous.unavailable.length ? `目录已无以下商品，未复制：${previous.unavailable.join('、')}。` : '';
@@ -867,14 +881,14 @@ async function loadRepeatOrder() {
       if (!customerInput.value.trim()) customerInput.value = previous.customer;
       // Preserve the current draft and existing request IDs; the new cart produces a new ID.
       renderCart(); renderDraft(); setControls(); saveWorkspace();
-      say(`已从 ${previous.number} 复制 ${previous.items.length} 项商品，请重新填写每项交期，再确认提交。${warnings}`);
+      say(`已复制 ${previous.items.length} 项商品，请重新填写交期后提交。${warnings}`, !warnings);
       const url=new URL(location.href);url.searchParams.delete('reorder');window.history.replaceState(null,'',url);
       cartItems.querySelector('input[type="date"]')?.focus();
     };
     if (cart.length || productInput.value || quantityInput.value || dateInput.value || noteInput.value) {
       say(`当前已有采购车或未完成草稿。是否把 ${previous.number} 的 ${previous.items.length} 项商品追加到采购车？原有内容会保留。${warnings}`);
       const add=document.createElement('button');add.type='button';add.className='button secondary';add.textContent='保留当前内容，追加商品';add.onclick=apply;
-      const cancel=document.createElement('button');cancel.type='button';cancel.className='quiet-link';cancel.textContent='暂不导入';cancel.onclick=()=>{notice.hidden=true;const url=new URL(location.href);url.searchParams.delete('reorder');window.history.replaceState(null,'',url);};
+      const cancel=document.createElement('button');cancel.type='button';cancel.className='quiet-link';cancel.textContent='暂不导入';cancel.onclick=dismiss;
       notice.append(add,cancel);
     } else apply();
   } catch(error) { say(error.message || '原订单暂时无法加载，请返回历史订单重试。'); }
@@ -883,8 +897,36 @@ async function loadRepeatOrder() {
 // The editable review is intentionally separate from the cart and order submission.
 let pasteRows = [];
 let pasteBusy = false;
+let toolRevision = 0;
 const pastePanel = byId('paste-panel');
 const pasteError = message => { byId('paste-error').textContent=message; byId('paste-error').hidden=!message; };
+function resetOrderTools() {
+  clearTimeout(reorderNoticeTimer);
+  byId('reorder-notice').hidden = true;
+  history = [];
+  catalogContext = null;
+  notePromptedFor = '';
+  messages.replaceChildren();
+  appendMessage('assistant', greeting);
+  chatMessage.value = '';
+  renderChoices(examples);
+  byId('chat-source').textContent = '对话接单';
+  toolRevision += 1;
+  pasteRows = [];
+  pasteBusy = false;
+  byId('paste-text').value = '';
+  byId('paste-rows').replaceChildren();
+  byId('paste-review').hidden = true;
+  byId('paste-confirm').checked = false;
+  byId('paste-common-date').value = '';
+  byId('paste-date-mode').value = 'missing';
+  for (const id of ['paste-info', 'paste-warnings', 'paste-validation']) byId(id).textContent = '';
+  pasteError('');
+  byId('parse-paste').disabled = false;
+  byId('import-paste').disabled = true;
+  setToolExpanded('chat', false, false);
+  setToolExpanded('paste', false, false);
+}
 function pasteProblems(row) {
   const product=catalog.get(row.sku);
   const problems=[];
@@ -932,7 +974,7 @@ function renderPaste() {
   }
   validatePaste();
 }
-function setToolExpanded(kind, expanded) {
+function setToolExpanded(kind, expanded, focus = true) {
   const panel = kind === 'paste' ? pastePanel : byId('chat-panel');
   const toggle = byId(kind === 'paste' ? 'open-paste' : 'open-chat');
   panel.hidden = !expanded;
@@ -942,7 +984,7 @@ function setToolExpanded(kind, expanded) {
     panel.scrollIntoView({behavior:'smooth',block:'start'});
     if(kind==='paste') byId('paste-text').focus({preventScroll:true});
     else chatMessage.focus({preventScroll:true});
-  } else toggle.focus({preventScroll:true});
+  } else if (focus) toggle.focus({preventScroll:true});
 }
 byId('open-paste').onclick=()=>setToolExpanded('paste',pastePanel.hidden);
 byId('close-paste').onclick=()=>setToolExpanded('paste',false);
@@ -954,16 +996,18 @@ byId('parse-paste').onclick=async()=>{
  await catalogReady;
  if(!workspaceReady){pasteError('商品目录尚未加载，请刷新重试。');return;}
  const text=byId('paste-text').value;
+ const revision=toolRevision;
  pasteBusy=true;byId('parse-paste').disabled=true;byId('paste-review').hidden=true;pasteError('');byId('paste-info').textContent='正在识别，请稍候…';
  try{
   const result=await request(`${apiPrefix}/paste`,{text,use_model:byId('paste-model').checked});
+  if(revision!==toolRevision||submitted)return;
   if(byId('paste-text').value!==text){byId('paste-info').textContent='识别期间内容已变化，请重新识别。';return;}
   pasteRows=result.rows.map(row=>({...row}));byId('paste-common-date').value=result.common_date||'';
   byId('paste-warnings').textContent=result.warnings.join(' ');byId('paste-confirm').checked=false;
   byId('paste-info').textContent=`${result.source}：识别到${pasteRows.length}项。请补全标出的信息，核对原文后加入采购车。`;
   byId('paste-review').hidden=false;renderPaste();
- }catch(error){pasteError(error.message||'识别失败，请检查内容或手动选择商品。');byId('paste-info').textContent='';}
- finally{pasteBusy=false;byId('parse-paste').disabled=false;validatePaste();}
+ }catch(error){if(revision===toolRevision&&!submitted){pasteError(error.message||'识别失败，请检查内容或手动选择商品。');byId('paste-info').textContent='';}}
+ finally{if(revision===toolRevision){pasteBusy=false;byId('parse-paste').disabled=false;validatePaste();}}
 };
 byId('apply-paste-date').onclick=()=>{
  const value=byId('paste-common-date').value;

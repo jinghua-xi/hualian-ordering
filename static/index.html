@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#ffffff">
   <title>在线接单 · 华联服装辅料福州分公司</title>
-  <link rel="stylesheet" href="./styles.css?v=catalog-100-1">
-  <script type="module" src="./app.js?v=cart-transitions-1"></script>
+  <link rel="stylesheet" href="./styles.css?v=order-workflow-2">
+  <script type="module" src="./app.js?v=order-workflow-2"></script>
 </head>
 <body>
   <header class="topbar">
@@ -96,7 +96,7 @@
         <p class="field-hint">会保留当前采购车和商品草稿。本步骤不提交订单。</p>
       </div>
     </section>
-    <section id="reorder-notice" class="panel order-form" role="status" hidden></section>
+    <section id="reorder-notice" class="reorder-toast" role="status" aria-live="polite" aria-atomic="true" hidden></section>
     <div class="workspace" id="order-workspace">
       <section class="panel draft-panel" aria-labelledby="draft-title">
         <div class="panel-head">
@@ -189,6 +189,7 @@
             <div class="field">
               <label for="customer">客户名称</label>
               <input id="customer" name="customer" placeholder="填写公司或客户名称" maxlength="80" required>
+              <p id="customer-binding-hint" class="field-hint" hidden>客户名称与采购员账号绑定，只能由管理员修改。</p>
             </div>
             <fieldset id="contact-fields" hidden>
               <legend>联系方式（至少填写一种）</legend>
