@@ -70,7 +70,7 @@ class Security(unittest.TestCase):
   status,html,headers=self.req('/admin/login');self.assertEqual(status,200);self.assertIn('管理员登录',html)
   self.assertEqual(headers['X-Frame-Options'],'DENY');self.assertIn("frame-ancestors 'none'",headers['Content-Security-Policy'])
   self.assertEqual(self.login('/admin/login','staff_profile','password123')[0],401)
-  status,_,headers=self.login('/admin/login','admin','admin');self.assertEqual(status,303);self.assertEqual(headers['Location'],'/accounts/')
+  status,_,headers=self.login('/admin/login','admin','admin');self.assertEqual(status,303);self.assertEqual(headers['Location'],'/sales/')
   self.assertEqual(self.login('/sales/login','staff_profile','password123')[2]['Location'],'/sales/')
  def test_five_failures_captcha_cookie_replay_and_basic_bypass(self):
   self.app.manage_account(dict(action='create',username='captcha_buyer',password='right123',role='buyer'))
@@ -138,5 +138,33 @@ class Security(unittest.TestCase):
   with patch('server.DEMO_MODE',False),patch('server.public_search',return_value=[]),patch('server.build_opener',side_effect=OSError('offline')):
    self.assertEqual(self.app.enrich_advice(response,'POM插扣')['web_status'],'unavailable')
    self.assertIn('目录答复',response['reply'])
+
+ def test_explicit_public_search_limits_outbound_query_and_cannot_supply_products(self):
+  app=self.app
+  draft={'sku':'T5','quantity':200,'customer':'内部客户'}
+  result={'title':'中国剪纸','url':'https://baike.baidu.com/item/example','snippet':'中国传统工艺。'}
+  with patch('server.public_keyword_search',return_value=[result]) as search:
+   reply=app.consult_catalog('在百度百科查 中国剪纸',{'draft':draft,'history':[{'role':'user','content':'内部对话'}]})
+   search.assert_called_once_with('中国剪纸',baike=True)
+   self.assertNotIn('draft',reply)
+   self.assertEqual(reply['references'],[result])
+   self.assertNotIn('matches',reply)
+   for query in ('搜索 邮箱 admin@example.com','搜索 订单号 SO-12345','搜索 https://127.0.0.1/test'):
+    rejected=app.consult_catalog(query,{'draft':draft})
+    self.assertNotIn('references',rejected)
+    self.assertNotIn('draft',rejected)
+   self.assertEqual(search.call_count,1)
+
+ def test_360_search_uses_original_links_and_rejects_internal_or_generated_results(self):
+  import io
+  import web_lookup as web
+  def entry(link):
+   return f'<h3 class="res-title"><a href="/link" data-mdurl="{link}"><em>四合扣</em>用途</a></h3><p class="res-desc">绳结常用于拖车救援。四合扣常用于衣物开合。</p>'
+  body=''.join(map(entry,('http://127.0.0.1/', 'https://ai.so.com/example', 'https://example.com/reference')))
+  web._cache.clear()
+  with patch('web_lookup.build_opener') as opener:
+   opener.return_value.open.return_value.__enter__.return_value=io.BytesIO(body.encode())
+   results=web.public_keyword_search('四合扣的用途场景')
+  self.assertEqual(results,[{'title':'四合扣用途','url':'https://example.com/reference','snippet':'四合扣常用于衣物开合。'}])
 
 if __name__=='__main__':unittest.main()

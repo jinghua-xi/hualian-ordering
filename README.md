@@ -2,7 +2,7 @@
 
 English · [简体中文](README.zh-CN.md)
 
-An AI-assisted B2B ordering prototype for Hualian Garment Accessories, Fuzhou. It combines self-hosted Qwen3-8B, a 100-SKU catalogue, procurement-text parsing, a multi-item cart and a sales dashboard to turn purchasing requests into validated order drafts.
+An AI-assisted B2B ordering prototype for Hualian Garment Accessories, Fuzhou. It combines a self-hosted Ollama model, a 100-SKU catalogue, procurement-text parsing, a multi-item cart and a sales dashboard to turn purchasing requests into validated orders.
 
 面向华联服装辅料福州分公司的接单试用项目：结合自部署模型、商品检索、智能粘贴、采购车和销售后台，将采购需求整理为可核对的订单。
 
@@ -10,25 +10,22 @@ An AI-assisted B2B ordering prototype for Hualian Garment Accessories, Fuzhou. I
 
 ## Features
 
-- **Use-case recommendations:** retrieve products by purpose, category, material, colour and dimensions. Qwen receives a bounded set of catalogue descriptions and asks for missing information.
-- **Drafts and carts:** editable quantities, per-item delivery dates and notes of up to 100 characters. A completed draft is automatically saved to the cart when the customer starts another product inquiry; incomplete drafts are retained with a reminder. Includes bulk date editing and browser-session recovery.
-- **Smart paste:** parse procurement text or rows copied from Excel. Rules run first; Qwen assistance is enabled by default and can help split complex text when a GPU is available. Model failures preserve rule-based results for review. Supports shared dates and separate per-item dates.
+- **AI consultation:** ask general questions, search public references or get product suggestions by purpose, category, material, colour and dimensions. Product suggestions come from the catalogue. Chat has a daily allowance of 150 messages and leaves purchase fields and the cart to the buyer.
+- **Drafts and carts:** find products by SKU or name in a single search-and-select field. Edit quantities, per-item delivery dates and notes of up to 100 characters, or update delivery dates in bulk. Drafts can be recovered from the browser session.
+- **Smart paste:** parse procurement text or rows copied from Excel. Rules run first; Qwen assistance is enabled by default and can help split complex text when a GPU is available. Model failures preserve rule-based results for review. Supports shared dates and separate per-item dates, with searchable product selection in each review row.
 - **Buyer and guest workflows:** internally issued buyer accounts see only their own orders and can reorder. New customers submit an inquiry without an account and provide at least one contact method.
-- **Sales and administration:** sales staff review inquiries and buyer orders, update four order statuses, undo the latest status change and export Excel. Staff can remove orders and inquiries with a second confirmation; records and deletion audits remain stored, linked records are preserved, and unsent notifications stop for removed orders. Only administrators manage accounts and bound customer names.
-- **Order notifications:** China-time timestamps and daily sequential order IDs, Excel workbooks and a retryable SMTP outbox. Sales can pause notifications and change the recipient.
-- **Deployment and validation:** one SSH command validates, backs up, uploads, restarts and checks the application, with an attempted source rollback on failure. The current regression suite contains 60 tests.
+- **Sales and administration:** sales staff filter and review inquiries and buyer orders, update order status, undo the latest status change and export Excel. Staff can remove orders and inquiries with a second confirmation and an audit record. Administrators manage products, accounts and bound customer names.
+- **Order notifications:** China-time timestamps and daily sequential order IDs, Excel workbooks and a retryable SMTP outbox. Sales can pause notifications, change the recipient or clear pending messages with confirmation.
+- **Deployment and validation:** one SSH command validates, backs up, uploads, restarts and checks the application, with an attempted source rollback on failure.
 
 ## Stack and request flow
 
-Python 3.9+ standard library, SQLite, HTML/CSS/JavaScript, Ollama and Qwen3-8B. The web application has no third-party Python package requirements; the model runs as a separate service.
+Python 3.9+ standard library, SQLite, HTML/CSS/JavaScript and Ollama. The model runs as a separate service, with Qwen3-8B as the application default.
 
 ```text
-Browser: AI chat / smart paste / manual selection
-  -> Python API: catalogue retrieval and field extraction
-  -> Ollama / Qwen3-8B: constrained structured output
-  -> Server validation: products, quantities, units, dates and permissions
-  -> Item draft -> cart -> SQLite
-  -> Excel export and SMTP notification queue
+Consultation: browser -> Python API -> catalogue / Ollama / public web search -> answer
+Ordering: product search or smart paste -> buyer review -> cart -> server validation -> SQLite
+Fulfilment: sales dashboard -> status updates, Excel export and SMTP notification queue
 ```
 
 Retrieval uses local SKU, category, purpose, keyword and dimension matching. The model receives relevant records rather than the entire catalogue on every turn. Model output is checked against catalogue values and server-side order validation.
@@ -49,7 +46,7 @@ python3 server.py
 - Administrator entry: <http://127.0.0.1:8765/admin/login>, local demo credentials `admin` / `admin`.
 - Sales entry: <http://127.0.0.1:8765/sales/login>; an administrator can issue sales accounts.
 
-Try `我要2000套黑色四合扣` (2,000 sets of black snap fasteners), select T5 and enter a delivery date at least seven days ahead. Add it manually or start an inquiry about a different product to save the completed draft automatically.
+Search for `T5` in the product field, select the black 12.4 mm snap fastener, enter 2,000 sets and choose a delivery date at least seven days ahead. Add the item to the cart and review it before submitting.
 
 For model-backed chat, use `DEMO_MODE=0`. The defaults are `OLLAMA_BASE_URL=http://127.0.0.1:11434` and `OLLAMA_MODEL=qwen3:8b`. GPU integration tests and rule-based local tests are separate.
 
@@ -81,7 +78,7 @@ for test in tests/test_*.py; do
 done
 ```
 
-The current **60 tests** cover retrieval, draft transitions, invalid quantities/dates, paste parsing, order ownership, role permissions, status changes, record deletion and its permission/notification boundaries, notification settings and deployment transport. They use temporary databases and mocked mail delivery, without submitting live orders or sending real email. See the [test notes](tests/README.md).
+The regression suite covers catalogue and chat routing, quota limits, purchase validation, paste parsing, order ownership, role permissions, product administration, status changes, record deletion, mail settings and deployment transport. It uses temporary databases and mocked mail delivery. See the [test notes](tests/README.md).
 
 ## Cloud deployment
 
@@ -93,6 +90,28 @@ Configure the local connection files in `.deploy/`, then run:
 ```
 
 See the [deployment guide](ops/DEPLOYMENT.md) and [SSH troubleshooting record](ops/SSH-REPAIR.md). The existing Compshare instance starts Ollama and the website at boot; full model-backed chat uses GPU mode. Source deployments preserve the server's order database, private configuration and model weights.
+
+## Upgrading the Ollama model
+
+The default is `qwen3:8b`. `qwen3.8:27b` is a candidate upgrade with Apache-2.0 open weights. The Ollama package is about 18 GB on disk. The current RTX 4090 has 24 GB of VRAM, so check GPU placement, memory usage and latency with the application's 8,192-token context before switching. [Ollama model page](https://ollama.com/library/qwen3.8:27b) · [Ollama context and GPU checks](https://docs.ollama.com/context-length)
+
+1. Open a terminal on the cloud GPU instance and test the candidate alongside the installed 8B model.
+
+   ```sh
+   ollama pull qwen3.8:27b
+   ollama run qwen3.8:27b 'Explain the difference between snap fasteners and sew-on buttons in Chinese.'
+   ollama ps
+   ```
+
+   Check `PROCESSOR` in `ollama ps`. `100% GPU` means the loaded model is fully on the GPU for that run. In a trial configuration, compare the same catalogue queries and smart-paste examples on both models. Check returned SKUs, quantities, delivery dates and response time.
+
+2. When the candidate passes, add or replace this line in the server's `/workspace/ordering-preview/preview.env` and restart the ordering service. The usual `./deploy` command from an approved local checkout also restarts it and runs health checks.
+
+   ```sh
+   export OLLAMA_MODEL=qwen3.8:27b
+   ```
+
+3. Keep `qwen3:8b` installed for rollback and for the existing deployment check. To revert, set `OLLAMA_MODEL=qwen3:8b` in the same file and restart the service again.
 
 ## Order, email and access rules
 

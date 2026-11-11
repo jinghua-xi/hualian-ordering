@@ -5,7 +5,6 @@ const messages = byId('messages');
 const chatForm = byId('chat-form');
 const chatMessage = byId('chat-message');
 const choices = byId('choices');
-const productInput = byId('product');
 const quantityInput = byId('quantity');
 const dateInput = byId('delivery-date');
 const noteInput = byId('item-note');
@@ -47,18 +46,23 @@ let recoveryKey = `hualian-order-recovery-v2:${guestMode ? 'guest' : 'pending'}`
 
 let catalog = new Map();
 let history = [];
-let selection = { category: '', color: '' };
 let quantityUnit = '';
-let deliveryDateRevision = 0;
 let deliveryClock = null;
 let workspaceReady = false;
 let catalogContext = null;
 let chatting = false;
+let chatQuota = null;
+let chatQuotaLoading = false;
 let submitting = false;
 let submitted = false;
 let accountCustomer = '';
-let notePromptedFor = '';
 let reorderNoticeTimer;
+
+const draftPicker = createProductPicker({ id: 'product-search', onChange: updateDraftProduct });
+const productSearch = draftPicker.input;
+productSearch.required = true;
+productSearch.disabled = true;
+byId('draft-product-picker').append(draftPicker.element);
 
 function todayInChina(now = new Date()) {
   const date = Object.fromEntries(chinaDate.formatToParts(now).map(({ type, value }) => [type, value]));
@@ -106,6 +110,11 @@ function refreshDateLimits() {
   dateInput.min = minimum;
   cartItems.querySelectorAll('[data-delivery-date]').forEach((field) => { field.min = minimum; });
   byId('delivery-hint').textContent = `${deliveryDateHint()}实际交期由销售确认。`;
+  const exampleBase = calendarDate(minimum).getTime();
+  for (const date of document.querySelectorAll('[data-paste-example-days]')) {
+    date.dateTime = new Date(exampleBase + Number(date.dataset.pasteExampleDays) * dayMs).toISOString().slice(0, 10);
+    date.textContent = date.dateTime;
+  }
 }
 
 function showDateWarnings() {
@@ -138,7 +147,7 @@ async function loadDeliveryClock() {
 }
 
 function draftReady() {
-  return catalog.has(productInput.value) && validQuantity(quantityInput.valueAsNumber) && validDeliveryDate(dateInput.value);
+  return catalog.has(draftPicker.sku) && validQuantity(quantityInput.valueAsNumber) && validDeliveryDate(dateInput.value);
 }
 
 function recoveryText(value, limit) {
@@ -148,12 +157,11 @@ function recoveryText(value, limit) {
 function saveWorkspace() {
   if (!workspaceReady) return;
   const draft = {
-    sku: productInput.value,
+    sku: draftPicker.sku,
     quantity: recoveryText(quantityInput.value, 24),
     delivery_date: recoveryText(dateInput.value, 10),
     note: recoveryText(noteInput.value, noteInput.maxLength),
     unit: quantityUnit,
-    ...selection,
   };
   const customer = recoveryText(customerInput.value, 80);
   try {
@@ -199,17 +207,13 @@ function restoreWorkspace() {
   }
   const draft = saved.draft;
   if (draft && typeof draft === 'object') {
-    if (!productInput.value && catalog.has(draft.sku)) productInput.value = draft.sku;
+    if (!draftPicker.sku && catalog.has(draft.sku)) draftPicker.setSku(draft.sku);
     if (!quantityInput.value) {
       quantityInput.value = recoveryText(draft.quantity, 24);
       quantityUnit = recoveryText(draft.unit, 12);
     }
     if (!dateInput.value) dateInput.value = recoveryText(draft.delivery_date, 10);
     if (!noteInput.value) noteInput.value = recoveryText(draft.note, noteInput.maxLength);
-    selection = {
-      category: recoveryText(draft.category, 80),
-      color: recoveryText(draft.color, 80),
-    };
   }
   if (!customerInput.value) customerInput.value = recoveryText(saved.customer, 80);
   renderCart();
@@ -227,8 +231,10 @@ async function request(path, body) {
   if (response.status === 401) throw new Error('登录已过期，请刷新页面后重新登录。');
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(typeof data.error === 'string' ? data.error :
+    const error = new Error(typeof data.error === 'string' ? data.error :
       typeof data.message === 'string' ? data.message : `请求失败（${response.status}），请重试。`);
+    error.chatQuota = data.chat_quota;
+    throw error;
   }
   return data;
 }
@@ -247,15 +253,43 @@ function appendMessage(role, content, { pending = false, products = [], referenc
   label.className = 'message-label';
   label.textContent = role === 'user' ? '你' : 'AI 接单助手';
   const paragraph = document.createElement('p');
-  paragraph.textContent = content;
+  if (role === 'assistant') {
+    for (const [index, part] of content.split(/\*\*([^*\r\n]+)\*\*/).entries()) {
+      if (index % 2 === 0) {
+        paragraph.append(part);
+      } else {
+        const strong = document.createElement('strong');
+        strong.textContent = part;
+        paragraph.append(strong);
+      }
+    }
+  } else {
+    paragraph.textContent = content;
+  }
   bubble.append(label, paragraph);
-  if (products.length) bubble.append(renderMatches(products));
+  if (products.length) {
+    bubble.append(renderMatches(products.slice(0, 3)));
+    if (products.length > 3) {
+      const more = document.createElement('details');
+      more.className = 'catalog-more';
+      const summary = document.createElement('summary');
+      summary.textContent = `查看其余 ${products.length - 3} 款`;
+      more.append(summary, renderMatches(products.slice(3), 3));
+      bubble.append(more);
+    }
+  }
   if (references.length) {
     const links=document.createElement('div'); links.className='advice-references';
-    const label=document.createElement('small');label.textContent='公开选型参考';links.append(label);
-    for(const source of references.slice(0,3)){
+    const label=document.createElement('small');label.textContent='公开资料来源';links.append(label);
+    for(const [index,source] of references.slice(0,3).entries()){
       if(typeof source?.url!=='string'||!/^https?:\/\//.test(source.url))continue;
       const a=document.createElement('a');a.href=source.url;a.textContent=source.title||'参考资料';a.target='_blank';a.rel='noopener noreferrer';links.append(a);
+      if (typeof source.snippet === 'string' && source.snippet) {
+        a.textContent = `[${index + 1}] ${a.textContent}`;
+        const snippet = document.createElement('span');
+        snippet.textContent = source.snippet.slice(0, 100) + (source.snippet.length > 100 ? '…' : '');
+        links.append(snippet);
+      }
     }
     bubble.append(links);
   }
@@ -268,51 +302,41 @@ function appendMessage(role, content, { pending = false, products = [], referenc
   return bubble;
 }
 
-function makeChoice(label, value, isProduct) {
-  const button = document.createElement('button');
-  button.className = 'choice';
-  button.type = 'button';
-  button.value = value;
-  button.textContent = label;
-  if (isProduct) button.dataset.product = '';
-  return button;
-}
-
-function renderChoices(items, shownSkus = []) {
+function renderChoices(items) {
   choices.replaceChildren();
-  for (const item of items ?? []) {
+  if (!Array.isArray(items)) return;
+  for (const item of items.slice(0, 3)) {
     if (typeof item.label !== 'string' || typeof item.value !== 'string') continue;
-    const isProduct = item.kind === 'product' || (item.kind === undefined && catalog.has(item.value));
-    if (isProduct && shownSkus.includes(item.value)) continue;
-    const product = isProduct ? catalog.get(item.value) : null;
-    const label = product?.manufacturer_sku ? `选用 ${productLabel(product)}` : item.label;
-    choices.append(makeChoice(label, item.value, isProduct));
+    const button = document.createElement('button');
+    button.className = 'choice';
+    button.type = 'button';
+    button.textContent = item.label;
+    button.value = item.value;
+    choices.append(button);
   }
 }
 
-function renderMatches(products) {
+function renderMatches(products, offset = 0) {
   const list = document.createElement('ol');
   list.className = 'catalog-matches';
-  list.setAttribute('aria-label', '匹配的公开商品');
+  list.setAttribute('aria-label', '商品目录候选');
   for (const [index, product] of products.entries()) {
     const item = document.createElement('li');
     const title = document.createElement('strong');
-    title.textContent = `${index + 1}. ${productLabel(product)}`;
+    const number = offset + index + 1;
+    title.textContent = `${number}. ${productLabel(product)}`;
     const details = document.createElement('span');
     details.textContent = [product.spec, product.color, product.unit && `按${product.unit}计量`].filter(Boolean).join(' · ');
     const description = document.createElement('span');
     description.textContent = product.description || product.details || '';
-    const button = makeChoice('选用', product.sku, true);
-    button.setAttribute('aria-label', `选用第 ${index + 1} 项 ${productLabel(product)}`);
-    item.append(title, details, description, button);
+    item.append(title, details, description);
     list.append(item);
   }
   return list;
 }
 
 function renderDraft() {
-  const product = catalog.get(productInput.value);
-  const quantity = quantityInput.valueAsNumber;
+  const product = catalog.get(draftPicker.sku);
   byId('product-detail').hidden = !product;
   byId('detail-sku').textContent = customerSku(product);
   byId('detail-spec').textContent = product?.spec ?? '';
@@ -320,56 +344,180 @@ function renderDraft() {
   const details = Array.isArray(product?.details) ? product.details.join(' · ') : product?.details;
   byId('detail-notes-row').hidden = typeof details !== 'string' || !details;
   byId('detail-notes').textContent = [details, product?.description, product?.selection_notes].filter(Boolean).join('；');
-  byId('quantity-unit').textContent = product?.unit || quantityUnit;
+  byId('quantity-unit').textContent = product?.unit || '';
   byId('draft-status').textContent = submitted ? '已提交' : draftReady() ? '待加入' : '待填写';
-  clearItem.hidden = !(productInput.value || quantityInput.value || dateInput.value || noteInput.value || selection.category || selection.color);
+  clearItem.hidden = !(productSearch.value || quantityInput.value || dateInput.value || noteInput.value);
   const step = submitted ? 2 : cart.length ? 1 : 0;
   steps.forEach((node, index) => {
     if (index === step) node.setAttribute('aria-current', 'step');
     else node.removeAttribute('aria-current');
   });
-  if (submitted || !draftReady() || !customerInput.value.trim()) {
-    notePromptedFor = '';
-  } else if (notePromptedFor !== product.sku) {
-    notePromptedFor = product.sku;
-    if (!noteInput.value.trim()) {
-      appendMessage('assistant', '需要给这项商品加备注吗？可在右侧填写，或输入「备注：…」。也可以直接加入采购车。');
-    }
-  }
 }
 
-function currentDraft() {
-  const product = catalog.get(productInput.value);
-  const quantity = quantityInput.valueAsNumber;
-  const hasQuantity = validQuantity(quantity);
-  return {
-    sku: product?.sku ?? '',
-    category: product?.category ?? selection.category,
-    color: product?.color ?? selection.color,
-    quantity: hasQuantity ? quantity : null,
-    unit: hasQuantity ? quantityUnit || product?.unit || '' : '',
-    customer: customerInput.value.trim(),
-    delivery_date: dateInput.value,
-  };
+function showChatQuota(quota) {
+  if (!quota || !Number.isInteger(quota.limit) || !Number.isInteger(quota.remaining)) return;
+  chatQuota = quota;
+  byId('chat-quota').textContent = `每日最多 ${quota.limit} 条 · 剩余 ${quota.remaining} 条`;
+}
+
+async function refreshChatQuota() {
+  if (chatQuotaLoading || chatting) return;
+  chatQuotaLoading = true;
+  setControls();
+  try {
+    const result = await request(`${apiPrefix}/chat-quota`);
+    showChatQuota(result.chat_quota);
+  } catch {
+    if (!chatQuota) byId('chat-quota').textContent = '每日最多 150 条 · 剩余额度暂不可用';
+  } finally {
+    chatQuotaLoading = false;
+    setControls();
+  }
 }
 
 function setControls() {
-  const chatLocked = chatting || submitting || submitted;
+  const workLocked = submitting || submitted;
+  const chatLocked = chatting || workLocked || chatQuotaLoading || (chatQuota?.remaining === 0 && chatQuota.day === todayInChina());
   chatForm.querySelector('button').disabled = chatLocked;
   chatMessage.disabled = submitting || submitted;
-  for (const container of [choices, messages]) {
-    container.querySelectorAll('button').forEach((button) => { button.disabled = chatLocked; });
-  }
-  addItem.disabled = chatLocked || !workspaceReady;
-  clearItem.disabled = chatLocked;
-  submitOrder.disabled = chatLocked || !cart.length;
+  choices.querySelectorAll('button').forEach(button => { button.disabled = chatLocked; });
+  addItem.disabled = workLocked || !workspaceReady;
+  clearItem.disabled = workLocked;
+  submitOrder.disabled = workLocked || !cart.length;
   cartItems.querySelectorAll('input, textarea, button').forEach((field) => { field.disabled = submitting || submitted; });
-  productInput.disabled = submitting || !workspaceReady;
+  productSearch.disabled = workLocked || !workspaceReady;
+  if (productSearch.disabled) draftPicker.close();
   quantityInput.disabled = submitting;
   dateInput.disabled = submitting;
   noteInput.disabled = submitting;
   customerInput.disabled = submitting;
-  byId('cart-bulk-date').querySelectorAll('input, select, button').forEach(field => { field.disabled = chatLocked || !cart.length; });
+  byId('cart-bulk-date').querySelectorAll('input, select, button').forEach(field => { field.disabled = workLocked || !cart.length; });
+}
+
+function normalizeProductQuery(value) {
+  return value.normalize('NFKC').toLowerCase().replace(/[‐‑–—−]/g, '-').replace(/\s+/g, '');
+}
+
+function productOptionLabel(product) {
+  return `${productLabel(product)} · ${product.spec}`;
+}
+
+function createProductPicker({ id, label, products = () => catalog.values(), initialSku = '', onChange }) {
+  const element = byId('product-picker-template').content.firstElementChild.cloneNode(true);
+  const input = element.querySelector('input');
+  const results = element.querySelector('.product-results');
+  const list = results.querySelector('[role="listbox"]');
+  const empty = results.querySelector('p');
+  const status = element.querySelector('[role="status"]');
+  input.id = id;
+  list.id = `${id}-options`;
+  input.setAttribute('aria-controls', list.id);
+  if (label) input.setAttribute('aria-label', label);
+
+  let sku = '';
+  let activeIndex = -1;
+
+  function setSku(value) {
+    const product = catalog.get(value);
+    sku = product?.sku ?? '';
+    input.value = product ? productOptionLabel(product) : '';
+    input.setCustomValidity(product ? '' : '请从列表中选择商品与规格。');
+  }
+
+  function highlight(index, scroll = false) {
+    list.children[activeIndex]?.setAttribute('aria-selected', 'false');
+    activeIndex = index;
+    const option = list.children[index];
+    if (!option) {
+      input.removeAttribute('aria-activedescendant');
+      return;
+    }
+    option.setAttribute('aria-selected', 'true');
+    input.setAttribute('aria-activedescendant', option.id);
+    if (scroll) option.scrollIntoView({ block: 'nearest' });
+  }
+
+  function open() {
+    const query = sku ? '' : normalizeProductQuery(input.value);
+    const matches = [...products()].filter(product =>
+      [product.sku, customerSku(product), product.name].some(value => normalizeProductQuery(value).includes(query)));
+    list.replaceChildren(...matches.map((product, index) => {
+      const option = document.createElement('li');
+      option.id = `${list.id}-${index}`;
+      option.dataset.sku = product.sku;
+      option.setAttribute('role', 'option');
+      option.setAttribute('aria-selected', 'false');
+      option.textContent = productOptionLabel(product);
+      return option;
+    }));
+    list.hidden = !matches.length;
+    empty.hidden = Boolean(matches.length);
+    status.textContent = matches.length ? `找到 ${matches.length} 项商品` : '没有匹配的商品';
+    results.hidden = false;
+    results.scrollTop = 0;
+    input.setAttribute('aria-expanded', 'true');
+    highlight(matches.findIndex(product => product.sku === sku));
+  }
+
+  function close() {
+    results.hidden = true;
+    input.setAttribute('aria-expanded', 'false');
+    highlight(-1);
+  }
+
+  function choose(option) {
+    if (!option || input.disabled || !catalog.has(option.dataset.sku)) return;
+    setSku(option.dataset.sku);
+    close();
+    input.select();
+    onChange(sku);
+  }
+
+  input.addEventListener('focus', () => {
+    if (sku) input.select();
+    open();
+  });
+  input.addEventListener('click', () => {
+    if (sku) input.select();
+    if (results.hidden) open();
+  });
+  input.addEventListener('blur', close);
+  input.addEventListener('input', () => {
+    const hadSelection = Boolean(sku);
+    sku = '';
+    input.setCustomValidity('请从列表中选择商品与规格。');
+    if (hadSelection) onChange('');
+    open();
+  });
+  input.addEventListener('keydown', event => {
+    if (event.isComposing || event.keyCode === 229) return;
+    const { key } = event;
+    if (key === 'Escape' && !results.hidden) {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Enter'].includes(key)) return;
+    event.preventDefault();
+    if (results.hidden) {
+      open();
+      if (key === 'Enter') return;
+    }
+    const count = list.children.length;
+    if (!count) return;
+    if (key === 'Enter') {
+      choose(list.children[activeIndex] ?? (count === 1 ? list.firstElementChild : null));
+      return;
+    }
+    const index = key === 'ArrowDown' ? Math.min(activeIndex + 1, count - 1)
+      : activeIndex === -1 ? count - 1 : Math.max(0, activeIndex - 1);
+    highlight(index, true);
+  });
+  list.addEventListener('mousedown', event => event.preventDefault());
+  list.addEventListener('click', event => choose(event.target.closest('[role="option"]')));
+
+  setSku(initialSku);
+  return { element, input, get sku() { return sku; }, setSku, close };
 }
 
 async function loadCatalog() {
@@ -381,10 +529,6 @@ async function loadCatalog() {
     }
     const { products } = await request(`${apiPrefix}/catalog`);
     catalog = new Map(products.map((product) => [product.sku, product]));
-    productInput.replaceChildren(new Option('请选择厂家公开货号与规格', ''));
-    for (const product of catalog.values()) {
-      productInput.add(new Option(`${productLabel(product)} · ${product.spec}`, product.sku));
-    }
     if (catalog.size === 0) {
       showError('draft-error', '公开目录暂无商品。');
     } else {
@@ -394,7 +538,6 @@ async function loadCatalog() {
       if (!guestMode) {await loadRepeatOrder();customerInput.value=accountCustomer;renderDraft();}
     }
   } catch {
-    productInput.replaceChildren(new Option('公开目录暂时无法加载', ''));
     showError('draft-error', '商品目录加载失败，请刷新页面后重试。');
   }
   setControls();
@@ -403,130 +546,50 @@ async function loadCatalog() {
 const deliveryReady = loadDeliveryClock();
 const catalogReady = loadCatalog();
 
-function stagePreviousItem(draft) {
-  const { sku, quantity, delivery_date: deliveryDate } = draft;
-  const note = noteInput.value.trim();
-  const product = catalog.get(sku);
-  if (!product || !validQuantity(quantity)) return '请核对当前商品和数量，再继续添加下一项。';
-  if (!validDeliveryDate(deliveryDate)) return `请调整当前商品的期望交期。${deliveryDateHint()}`;
-  if (note.length > noteInput.maxLength) return `当前商品备注超过 ${noteInput.maxLength} 字，请缩短后再咨询下一项。`;
-  if (cart.length >= maxCartLines) return `一笔试单最多可添加 ${maxCartLines} 项商品。`;
-  cart.push({ sku, quantity, delivery_date: deliveryDate, note });
-  clearDraft();
-  renderCart();
-  renderDraft();
-  cartFeedback(`已自动加入 ${productLabel(product)}`);
-  saveWorkspace();
-  return '';
-}
-
-async function sendMessage(rawMessage, displayMessage = rawMessage) {
+async function sendMessage(rawMessage) {
   const message = rawMessage.trim();
-  if (!message || chatting || submitting || submitted) return;
-  const noteMessage = /^(?:商品)?备注\s*[:：]([\s\S]*)$/.exec(message);
-  const skipNote = notePromptedFor && !noteInput.value.trim() && /^(?:不需要(?:备注)?|不用(?:备注)?|不加备注|无需备注|没有备注)[。！!]*$/.test(message);
-  if (noteMessage || skipNote) {
-    const note = noteMessage?.[1].trim() ?? '';
-    if (!productInput.value) {
-      showError('chat-error', '请先选择要备注的商品。');
-      return;
-    }
-    if (note.length > noteInput.maxLength) {
-      showError('chat-error', `商品备注最多 ${noteInput.maxLength} 字。`);
-      return;
-    }
-    noteInput.value = note;
-    chatMessage.value = '';
-    showError('chat-error');
-    appendMessage('user', message);
-    appendMessage('assistant', note ? '已填写这项商品的备注。' : '这项商品可以不填备注。');
-    renderDraft();
-    saveWorkspace();
+  if (!message || chatting || submitting || submitted || chatQuotaLoading) return;
+  if (chatQuota?.remaining === 0 && chatQuota.day === todayInChina()) {
+    showError('chat-error', '今天的聊天额度已用完，北京时间零点恢复。');
     return;
   }
 
-  const before = currentDraft();
-  const dateRevisionAtRequest = deliveryDateRevision;
+  const revision = toolRevision;
+  const previousChoices = [...choices.querySelectorAll('button')].map(button => ({
+    label: button.textContent,
+    value: button.value,
+  }));
   chatting = true;
   chatMessage.value = '';
+  renderChoices([]);
   showError('chat-error');
   setControls();
-  const userBubble = appendMessage('user', displayMessage.trim());
-  const pendingBubble = appendMessage('assistant', '正在匹配商品与选型建议…', { pending: true });
+  const userBubble = appendMessage('user', message);
+  const pendingBubble = appendMessage('assistant', '正在回复…', { pending: true });
 
   try {
-    await catalogReady;
     const result = await request(`${apiPrefix}/chat`, {
       message,
-      history: history.slice(-8),
-      draft: before,
+      history: history.slice(-12).map(turn => ({ ...turn, content: turn.content.slice(0, 600) })),
       catalog_context: catalogContext,
     });
+    showChatQuota(result.chat_quota);
+    if (revision !== toolRevision) return;
     pendingBubble.remove();
-    const current = currentDraft();
-    const productUnchanged = current.sku === before.sku && current.quantity === before.quantity && current.unit === before.unit;
-    const dateUnchanged = dateRevisionAtRequest === deliveryDateRevision && current.delivery_date === before.delivery_date;
-    const nextItem = result.next_item === true;
-    let advanceError = '';
-    if (nextItem) {
-      advanceError = productUnchanged && dateUnchanged ? stagePreviousItem(before) :
-        '当前商品在等待回复时已修改。请先核对草稿，再继续添加下一项。';
-    }
-    const modelReply = typeof result.reply === 'string' && result.reply.trim() ?
-      result.reply : '请核对右侧订单草稿，再补充所需的规格或数量。';
-    const savedNotice = nextItem && !advanceError ?
-      `上一项 ${productLabel(catalog.get(before.sku))}（${numberFormat.format(before.quantity)} ${before.unit}）已自动加入采购车。\n\n` : '';
-    const reply = advanceError || savedNotice + modelReply;
-    const matchSkus = (!advanceError && Array.isArray(result.matches) ? result.matches : []).map((item) => item?.sku);
-    const products = [...new Set(matchSkus)].map((sku) => catalog.get(sku)).filter(Boolean);
-    appendMessage('assistant', reply, { products, references:Array.isArray(result.references)?result.references:[] });
+    const reply = result.reply;
+    const products = Array.isArray(result.matches) ? result.matches : [];
+    appendMessage('assistant', reply, { products, references: result.references || [] });
     history.push({ role: 'user', content: message }, { role: 'assistant', content: reply });
-    if (advanceError) {
-      showError('draft-error', advanceError);
-      byId('chat-source').textContent = '订单草稿';
-      return;
-    }
-    if (result.catalog_context !== undefined) catalogContext = result.catalog_context;
-    const draft = result.draft ?? {};
-    const canApplyDraft = nextItem || !['catalog', 'draft_pending'].includes(result.mode);
-    if (canApplyDraft && productUnchanged) {
-      productInput.value = catalog.has(draft.sku) ? draft.sku : '';
-      selection = {
-        category: typeof draft.category === 'string' ? draft.category : '',
-        color: typeof draft.color === 'string' ? draft.color : '',
-      };
-      if (validQuantity(draft.quantity)) {
-        quantityInput.value = String(draft.quantity);
-        quantityUnit = draft.unit || catalog.get(productInput.value)?.unit || '';
-      } else {
-        quantityInput.value = '';
-        quantityUnit = '';
-      }
-      showError('draft-error');
-    }
-    if (accountCustomer && typeof draft.customer==='string' && draft.customer.trim()) {
-      accountCustomer=draft.customer;customerInput.value=accountCustomer;
-    }
-    if (!accountCustomer && !nextItem && canApplyDraft && current.customer === before.customer &&
-        typeof draft.customer === 'string' && draft.customer.length <= 80) {
-      customerInput.value = draft.customer;
-    }
-    if (canApplyDraft && dateUnchanged) {
-      if (validDeliveryDate(draft.delivery_date)) dateInput.value = draft.delivery_date;
-      else if (nextItem) dateInput.value = '';
-    }
-    if (nextItem) noteInput.value = '';
-    byId('chat-source').textContent = ({ qwen: 'Qwen3-8B', demo: '演示规则', draft: '订单草稿' })[result.source] ?? '公开目录';
-    if(result.web_status==='searched')byId('chat-source').textContent='Qwen · 公开搜索';
-    renderChoices(result.choices, products.map((product) => product.sku));
-    renderDraft();
-    showDateWarnings();
-    saveWorkspace();
+    catalogContext = result.catalog_context ?? null;
+    renderChoices(result.choices);
   } catch (error) {
+    showChatQuota(error.chatQuota);
+    if (revision !== toolRevision) return;
     pendingBubble.remove();
     userBubble.remove();
     if (!chatMessage.value) chatMessage.value = message;
-    showError('chat-error', error.message || '接单助手暂时不可用，请重试或手动填写。');
+    renderChoices(previousChoices);
+    showError('chat-error', error.message || '查询暂时不可用，请稍后重试。');
   } finally {
     chatting = false;
     setControls();
@@ -584,16 +647,17 @@ function renderCart() {
 
 function clearDraft() {
   draftForm.reset();
+  draftPicker.setSku('');
+  draftPicker.close();
   refreshDateLimits();
-  selection = { category: '', color: '' };
   quantityUnit = '';
   showError('draft-error');
 }
 
 function addToCart(event) {
   event.preventDefault();
-  if (chatting || submitting || submitted) return;
-  const sku = productInput.value;
+  if (submitting || submitted) return;
+  const sku = draftPicker.sku;
   const product = catalog.get(sku);
   const quantity = quantityInput.valueAsNumber;
   const deliveryDate = dateInput.value;
@@ -678,7 +742,7 @@ function showReceipt(order) {
 
 async function submitCart(event) {
   event.preventDefault();
-  if (submitting || chatting || submitted) return;
+  if (submitting || submitted) return;
   showError('order-error');
 
   const customer = customerInput.value.trim();
@@ -686,7 +750,12 @@ async function submitCart(event) {
     showError('order-error', '请添加采购商品并填写客户名称。');
     return;
   }
-  if (productInput.value && quantityInput.value && dateInput.value) {
+  if (productSearch.value && quantityInput.value && dateInput.value) {
+    if (!draftPicker.sku) {
+      showError('draft-error', '请先确认当前商品的规格，或清空当前商品后再提交。');
+      productSearch.focus();
+      return;
+    }
     const notice = validDeliveryDate(dateInput.value) ? '当前商品尚未加入采购车。请先加入，或清空当前商品后再提交。' :
       `请调整当前商品的期望交期，或清空后再提交。${deliveryDateHint()}`;
     showError('draft-error', notice);
@@ -705,7 +774,11 @@ async function submitCart(event) {
       return;
     }
   }
-  const items = cart.map(({ note, ...line }) => note?.trim() ? { ...line, note: note.trim() } : line);
+  const items = cart.map(({ note, ...line }) => ({
+    ...line,
+    catalog_spec: catalog.get(line.sku).spec,
+    ...(note?.trim() ? { note: note.trim() } : {}),
+  }));
   const contacts = Object.fromEntries(['qq', 'email', 'phone', 'wechat'].map(key => [key, byId(`contact-${key}`).value.trim()]));
   if (guestMode && !Object.values(contacts).some(Boolean)) {
     showError('order-error', 'QQ、邮箱、电话、微信至少填写一种。');
@@ -736,36 +809,36 @@ chatForm.addEventListener('submit', (event) => {
   event.preventDefault();
   void sendMessage(chatMessage.value);
 });
-function choose(event) {
+choices.addEventListener('click', event => {
   const button = event.target.closest('button');
-  if (button && !button.disabled) {
-    const product = catalog.get(button.value);
-    const label = product?.manufacturer_sku ? productLabel(product) : button.value;
-    void sendMessage(button.value, 'product' in button.dataset ? `选用 ${label}` : button.value);
-  }
-}
-choices.addEventListener('click', choose);
-messages.addEventListener('click', choose);
-productInput.addEventListener('change', () => {
-  selection = { category: '', color: '' };
-  const product = catalog.get(productInput.value);
-  if (product && quantityInput.value && quantityUnit && quantityUnit !== product.unit) {
+  if (button && !button.disabled) void sendMessage(button.value);
+});
+productSearch.addEventListener('input', () => {
+  showError('draft-error');
+  renderDraft();
+});
+
+function updateDraftProduct(sku) {
+  const product = catalog.get(sku);
+  if (!product) return;
+  if (quantityInput.value && quantityUnit && quantityUnit !== product.unit) {
     quantityInput.value = '';
     quantityUnit = '';
     showError('draft-error', `所选商品按「${product.unit}」计量，请重新填写数量。`);
   } else {
-    if (product && quantityInput.value) quantityUnit = product.unit;
+    if (quantityInput.value) quantityUnit = product.unit;
     showError('draft-error');
   }
   renderDraft();
-});
+  saveWorkspace();
+}
+
 quantityInput.addEventListener('input', () => {
-  quantityUnit = catalog.get(productInput.value)?.unit || '';
+  quantityUnit = catalog.get(draftPicker.sku)?.unit || '';
   showError('draft-error');
   renderDraft();
 });
 function editDeliveryDate() {
-  deliveryDateRevision += 1;
   showError('draft-error');
   refreshDateLimits();
   showDateWarnings();
@@ -780,7 +853,7 @@ clearItem.addEventListener('click', () => {
   clearDraft();
   renderDraft();
   saveWorkspace();
-  productInput.focus();
+  productSearch.focus();
 });
 cartItems.addEventListener('input', editCart);
 cartItems.addEventListener('change', editCart);
@@ -796,7 +869,7 @@ cartItems.addEventListener('click', (event) => {
   renderDraft();
   setControls();
   saveWorkspace();
-  (cartItems.querySelectorAll('[data-remove]')[Math.min(index, cart.length - 1)] || productInput).focus();
+  (cartItems.querySelectorAll('[data-remove]')[Math.min(index, cart.length - 1)] || productSearch).focus();
 });
 orderWorkspace.addEventListener('input', saveWorkspace);
 orderWorkspace.addEventListener('change', saveWorkspace);
@@ -828,7 +901,7 @@ byId('new-order').addEventListener('click', () => {
   renderDraft();
   setControls();
   saveWorkspace();
-  productInput.focus();
+  productSearch.focus();
 });
 
 refreshDateLimits();
@@ -885,7 +958,7 @@ async function loadRepeatOrder() {
       const url=new URL(location.href);url.searchParams.delete('reorder');window.history.replaceState(null,'',url);
       cartItems.querySelector('input[type="date"]')?.focus();
     };
-    if (cart.length || productInput.value || quantityInput.value || dateInput.value || noteInput.value) {
+    if (cart.length || productSearch.value || quantityInput.value || dateInput.value || noteInput.value) {
       say(`当前已有采购车或未完成草稿。是否把 ${previous.number} 的 ${previous.items.length} 项商品追加到采购车？原有内容会保留。${warnings}`);
       const add=document.createElement('button');add.type='button';add.className='button secondary';add.textContent='保留当前内容，追加商品';add.onclick=apply;
       const cancel=document.createElement('button');cancel.type='button';cancel.className='quiet-link';cancel.textContent='暂不导入';cancel.onclick=dismiss;
@@ -905,12 +978,10 @@ function resetOrderTools() {
   byId('reorder-notice').hidden = true;
   history = [];
   catalogContext = null;
-  notePromptedFor = '';
   messages.replaceChildren();
   appendMessage('assistant', greeting);
   chatMessage.value = '';
   renderChoices(examples);
-  byId('chat-source').textContent = '对话接单';
   toolRevision += 1;
   pasteRows = [];
   pasteBusy = false;
@@ -948,7 +1019,7 @@ function validatePaste() {
   const summary=details.slice(0,8).join('\n')+(details.length>8?'\n其余问题请查看对应商品行。':'');
   byId('paste-validation').textContent=pending?`还有${pending}项需补全：\n${summary}`:pasteRows.length?'信息齐全，请对照原文核对后确认加入采购车。':'没有待导入的商品。';
   byId('paste-validation').classList.toggle('paste-row-error',pending>0);
-  byId('import-paste').disabled=pasteBusy||chatting||submitting||submitted||!pasteRows.length||pending>0||!byId('paste-confirm').checked;
+  byId('import-paste').disabled=pasteBusy||submitting||submitted||!pasteRows.length||pending>0||!byId('paste-confirm').checked;
 }
 function renderPaste() {
   const container=byId('paste-rows');container.replaceChildren();
@@ -957,16 +1028,48 @@ function renderPaste() {
     const tr=document.createElement('tr');
     const cell=()=>{const td=document.createElement('td');tr.append(td);return td;};
     cell().textContent=row.source;
-    const select=document.createElement('select');select.setAttribute('aria-label',`第${index+1}项商品`);select.append(new Option('请选择目录商品',''));
-    const recommended=row.candidates||[];
-    const products=[...catalog.values()].sort((a,b)=>Number(recommended.includes(b.sku))-Number(recommended.includes(a.sku)));
-    for(const product of products) select.append(new Option(`${productLabel(product)} · ${product.spec}`,product.sku));
-    select.value=row.sku;select.onchange=()=>{row.sku=select.value;row.unitConfirmed=false;byId('paste-confirm').checked=false;renderPaste();};
-    const productCell=cell();productCell.append(select);
-    if(!row.sku){const productIssue=document.createElement('p');productIssue.className='paste-row-error';productIssue.textContent=row.candidates?.length?'有多个候选，请选择具体颜色或规格。':'未匹配到目录商品，请重新选择或移除此项。';productCell.append(productIssue);}
+    const recommended = new Set(row.candidates || []);
+    const products = [...catalog.values()].sort((a, b) => Number(recommended.has(b.sku)) - Number(recommended.has(a.sku)));
+    const picker = createProductPicker({
+      id: `paste-product-${index + 1}`,
+      label: `第${index + 1}项商品`,
+      products: () => products,
+      initialSku: row.sku,
+      onChange: sku => {
+        row.sku = sku;
+        row.unitConfirmed = false;
+        byId('paste-confirm').checked = false;
+        updateProduct();
+        validatePaste();
+      },
+    });
+    const productIssue = document.createElement('p');
+    productIssue.className = 'paste-row-error';
+    productIssue.textContent = recommended.size ? '请选择具体颜色或规格。' : '请选择目录商品或移除此项。';
+    cell().append(picker.element, productIssue);
     const quantityCell=cell();const quantity=document.createElement('input');quantity.type='number';quantity.min='1';quantity.max='1000000';quantity.step='1';quantity.value=row.quantity??'';quantity.setAttribute('aria-label',`第${index+1}项数量`);
-    quantity.oninput=()=>{row.quantity=quantity.valueAsNumber;byId('paste-confirm').checked=false;validatePaste();};quantityCell.append(quantity,document.createTextNode(` ${catalog.get(row.sku)?.unit||'待选单位'}`));
-    if(row.unit && catalog.get(row.sku) && row.unit!==catalog.get(row.sku).unit){const label=document.createElement('label');label.className='paste-check';const check=document.createElement('input');check.type='checkbox';check.checked=!!row.unitConfirmed;check.onchange=()=>{row.unitConfirmed=check.checked;byId('paste-confirm').checked=false;validatePaste();};label.append(check,document.createTextNode(`已核对原文「${row.unit}」与目录单位，数量正确`));quantityCell.append(label);}
+    quantity.oninput=()=>{row.quantity=quantity.valueAsNumber;byId('paste-confirm').checked=false;validatePaste();};
+    const unit = document.createTextNode('');
+    const unitCheck = document.createElement('label');
+    unitCheck.className = 'paste-check';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.onchange = () => {
+      row.unitConfirmed = check.checked;
+      byId('paste-confirm').checked = false;
+      validatePaste();
+    };
+    unitCheck.append(check, document.createTextNode(`已核对原文「${row.unit}」与目录单位，数量正确`));
+    quantityCell.append(quantity, unit, unitCheck);
+
+    function updateProduct() {
+      const product = catalog.get(row.sku);
+      productIssue.hidden = Boolean(product);
+      unit.textContent = ` ${product?.unit || '待选单位'}`;
+      unitCheck.hidden = !row.unit || !product || row.unit === product.unit;
+      check.checked = Boolean(row.unitConfirmed);
+    }
+    updateProduct();
     const delivery=document.createElement('input');delivery.type='date';delivery.min=deliveryMinimum();delivery.value=row.delivery_date;delivery.setAttribute('aria-label',`第${index+1}项交付日期`);delivery.onchange=()=>{row.delivery_date=delivery.value;byId('paste-confirm').checked=false;validatePaste();};cell().append(delivery);
     const note=document.createElement('textarea');note.value=row.note||'';note.maxLength=100;note.setAttribute('aria-label',`第${index+1}项备注`);note.oninput=()=>{row.note=note.value;byId('paste-confirm').checked=false;validatePaste();};cell().append(note);
     const controls=cell();const issues=document.createElement('p');issues.dataset.pasteIssues='';const remove=document.createElement('button');remove.type='button';remove.className='quiet-link';remove.textContent='移除此项';remove.setAttribute('aria-label',`移除粘贴第${index+1}项`);remove.onclick=()=>{pasteRows.splice(index,1);byId('paste-confirm').checked=false;renderPaste();};controls.append(issues,remove);
@@ -982,8 +1085,13 @@ function setToolExpanded(kind, expanded, focus = true) {
   toggle.querySelector('path').setAttribute('d', expanded ? 'M7 5l5 5 5-5M7 12l5 5 5-5' : 'M5 7l5 5-5 5M12 7l5 5-5 5');
   if (expanded) {
     panel.scrollIntoView({behavior:'smooth',block:'start'});
-    if(kind==='paste') byId('paste-text').focus({preventScroll:true});
-    else chatMessage.focus({preventScroll:true});
+    if (kind === 'paste') {
+      refreshDateLimits();
+      byId('paste-text').focus({preventScroll:true});
+    } else {
+      void refreshChatQuota();
+      chatMessage.focus({preventScroll:true});
+    }
   } else if (focus) toggle.focus({preventScroll:true});
 }
 byId('open-paste').onclick=()=>setToolExpanded('paste',pastePanel.hidden);
@@ -1018,7 +1126,7 @@ byId('apply-paste-date').onclick=()=>{
 };
 byId('paste-confirm').onchange=validatePaste;
 byId('import-paste').onclick=()=>{
- if(pasteBusy||chatting||submitting||submitted||!byId('paste-confirm').checked||!pasteRows.length||pasteRows.some(row=>pasteProblems(row).length)){validatePaste();return;}
+ if(pasteBusy||submitting||submitted||!byId('paste-confirm').checked||!pasteRows.length||pasteRows.some(row=>pasteProblems(row).length)){validatePaste();return;}
  if(cart.length+pasteRows.length>maxCartLines){pasteError(`采购车最多${maxCartLines}项，请分批加入或整理现有商品。`);return;}
  const count=pasteRows.length;
  cart.push(...pasteRows.map(({sku,quantity,delivery_date,note})=>({sku,quantity,delivery_date,note:note.trim()})));
@@ -1029,7 +1137,7 @@ byId('import-paste').onclick=()=>{
 
 
 byId('apply-cart-date').onclick = () => {
-  if (chatting || submitting || submitted || !cart.length) return;
+  if (submitting || submitted || !cart.length) return;
   refreshDateLimits();
   const value = byId('cart-common-date').value;
   if (!validDeliveryDate(value)) {

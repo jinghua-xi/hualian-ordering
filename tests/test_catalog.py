@@ -80,16 +80,31 @@ class Catalogue(unittest.TestCase):
     def test_catalogue_chat_returns_new_products_without_altering_draft(self):
         import server
         with patch.object(server, "DEMO_MODE", True):
-            result = server.order_chat({"message": "绳扣4.2mm有哪些？"})
+            result = server.consult_catalog("绳扣4.2mm有哪些？", {})
             self.assertEqual([p["sku"] for p in result["matches"]], ["K334"])
-            self.assertFalse(result["draft"]["sku"])
-            result = server.order_chat({"message": "安装T5按扣要什么工具？"})
+            self.assertNotIn("draft", result)
+            result = server.consult_catalog("安装T5按扣要什么工具？", {})
             self.assertEqual({p["category"] for p in result["matches"]}, {"打扣工具"})
             self.assertEqual([p["sku"] for p in result["matches"]], ["DK-001-PRESS"])
-            result = server.order_chat({"message": "拆卸T5按扣用什么工具？"})
+            result = server.consult_catalog("拆卸T5按扣用什么工具？", {})
             self.assertEqual([p["sku"] for p in result["matches"]], ["DK-001-REMOVE"])
-            result = server.order_chat({"message": "NA8343是整条拉链还是配件？"})
+            result = server.consult_catalog("NA8343是整条拉链还是配件？", {})
             self.assertIn("并非整条拉链", result["reply"])
+
+    def test_t5_installation_and_short_followups_keep_the_press_pliers(self):
+        import server
+        query = "手工安装T5塑料四合扣，应该用什么工具？"
+        history = [{"role": "user", "content": query}]
+        context = None
+        with patch.object(server, "DEMO_MODE", False), patch.object(server, "public_search", return_value=[]):
+            for message in (query, "你有什么推荐", "有什么推荐商品"):
+                result = server.consult_catalog(message, {"history": history, "catalog_context": context})
+                self.assertEqual([p["sku"] for p in result["matches"]], ["DK-001-PRESS"])
+                self.assertIn("模头", result["reply"])
+                self.assertEqual(result["references"][0]["url"], server.SNAP_PLIER_GUIDE["url"])
+                self.assertNotIn("draft", result)
+                history.append({"role": "user", "content": message})
+                context = result["catalog_context"]
 
 
 if __name__ == "__main__":

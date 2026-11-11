@@ -248,6 +248,71 @@ class AccountFlow(unittest.TestCase):
    self.assertEqual(result['source'],'规则识别');opener.assert_not_called()
 
 
+ def test_product_catalog_management(self):
+  req=self.req
+  admin={'user':'admin:admin'}
+  buyer={'user':'preview:preview'}
+  endpoint='/api/admin/products'
+  product=dict(action='create',sku='HL-TEST-71',name='演示方形标牌',spec='18 mm',category='标牌',unit='个')
+  self.assertIn('商品管理',req('/sales/',**admin)[1])
+  self.assertIn('管理员登录',req('/products/')[1])
+  self.assertIn('product-form',req('/products/',**admin)[1])
+  self.assertEqual(req(endpoint,product)[0],401)
+  self.assertEqual(req(endpoint,product,**buyer)[0],401)
+  req('/api/admin/accounts',dict(action='create',username='catalog_sales',password='password123',role='sales'),**admin)
+  _,_,headers=req('/sales/login',dict(username='catalog_sales',password='password123'),form=True)
+  cookie=headers.get_all('Set-Cookie')[0].split(';')[0]
+  self.assertEqual(req('/products/',cookie=cookie)[0],403)
+  self.assertEqual(req(endpoint,product,cookie=cookie)[0],403)
+  self.assertEqual(req(endpoint,{**product,'unit':'箱'},**admin)[0],400)
+  self.assertEqual(req(endpoint,{**product,'sku':'t5'},**admin)[0],409)
+  self.assertEqual(req(endpoint,product,**admin)[0],201)
+  self.assertEqual(req(endpoint,product,**admin)[0],409)
+
+  item=dict(sku=product['sku'],quantity=20,delivery_date=(self.app.china_now().date()+timedelta(days=10)).isoformat(),catalog_spec='18 mm')
+  order_body=dict(items=[item],request_id='catalog-management-001')
+  status,result,_=req('/api/orders',order_body,**buyer)
+  self.assertEqual(status,201)
+  old_order=result['order']['number']
+  update=dict(action='update',sku=product['sku'],name='方形标牌新版',spec='21 mm',revision=1)
+  self.assertEqual(req(endpoint,update,**admin)[0],200)
+  self.assertEqual(req(endpoint,update,**admin)[0],409)
+  self.app.init_db()
+  listing=req('/api/guest/catalog')[1]['products']
+  edited=next(row for row in listing if row['sku']==product['sku'])
+  self.assertEqual((edited['name'],edited['spec']),('方形标牌新版','21 mm'))
+  self.assertIn('方形标牌新版，21 mm',edited['description'])
+  self.assertNotIn('revision',edited)
+  self.assertEqual(req('/api/catalog',**buyer)[1]['products'],listing)
+  paste=req('/api/guest/paste',dict(text=f"HL-TEST-71 20个 {item['delivery_date']}交货",use_model=False))
+  self.assertEqual(paste[0],200)
+  self.assertEqual(paste[1]['rows'][0]['sku'],product['sku'])
+  chat=req('/api/guest/chat',dict(message='HL-TEST-71 是什么规格？',draft={}))
+  self.assertEqual(chat[0],200)
+  self.assertIn('21 mm',chat[1]['reply'])
+  for path, credentials in (('/api/guest/chat',{}),('/api/chat',buyer)):
+   status,consultation,_=req(path,dict(message='再加一款',draft=item,note_requested=True),**credentials)
+   self.assertEqual(status,200)
+   self.assertEqual(consultation['mode'],'catalog')
+   self.assertTrue({'draft','next_item','item_note'}.isdisjoint(consultation))
+   self.assertIn('商品与规格',consultation['reply'])
+  self.assertEqual(req('/api/orders',{**order_body,'request_id':'catalog-management-002'},**buyer)[0],409)
+  inquiry={**order_body,'request_id':'catalog-management-003','customer':'测试客户','contacts':{'wechat':'demo-test'}}
+  self.assertEqual(req('/api/guest/inquiries',inquiry)[0],409)
+  self.assertEqual(req('/api/guest/inquiries',{**inquiry,'items':[{**item,'catalog_spec':'21 mm'}]})[0],201)
+  history=req('/api/orders',**buyer)[1]['orders']
+  saved=next(order for order in history if order['number']==old_order)
+  self.assertEqual(saved['items'][0]['spec'],'18 mm')
+  self.assertEqual(req(f'/api/orders/{old_order}/repeat',**buyer)[1]['items'],[])
+
+  base=self.app.CATALOG['M916-25']
+  edit=dict(action='update',sku=base['sku'],name='编辑后的插扣',spec='内径 26 mm',revision=0)
+  self.assertEqual(req(endpoint,edit,**admin)[0],200)
+  changed=next(row for row in req('/api/guest/catalog')[1]['products'] if row['sku']==base['sku'])
+  self.assertEqual((changed['name'],changed['spec'],changed['unit']),('编辑后的插扣','内径 26 mm',base['unit']))
+  # Keep the baseline product intact for the other integration tests.
+  self.assertEqual(req(endpoint,{**edit,'name':base['name'],'spec':base['spec'],'revision':1},**admin)[0],200)
+
  def test_repeat_items_and_idempotency(self):
   item={'sku':'T5','quantity':1,'delivery_date':(self.app.china_now().date()+timedelta(days=10)).isoformat(),'note':'第一项'}
   payload={'customer':'重复条目测试','request_id':'repeat-items-test-0001','items':[item,{**item,'quantity':2000,'note':'第二项'}]}

@@ -1,4 +1,4 @@
-import {presentRecord, refreshRecord, recordDeleteControl} from '/record-dialog.js?v=record-delete-1';
+import {presentRecord, refreshRecord, recordDeleteControl, orderStatusLabel, statusProgress, setProgressStatus, recordProgressSummary} from '/record-dialog.js?v=status-progress-1';
 
 async function api(path, body) {
   const response = await fetch(path, body === undefined ? {cache:'no-store'} : {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -62,14 +62,13 @@ async function inquiries(){
   for(const inquiry of result.inquiries){
    const items=inquiry.payload.items;
    const thread=document.createElement('article');thread.className='record-thread';thread.dataset.recordNumber=inquiry.number;
-   const summary=document.createElement('div');summary.className='thread-summary';
-   const number=text('strong',inquiry.number);number.className='thread-number';number.title=inquiry.number;
-   const customer=text('span',inquiry.payload.customer);customer.className='thread-customer';customer.title=inquiry.payload.customer;
-   const count=text('span',`${items.length} 项商品`);count.className='thread-count';
-   const created=new Date(inquiry.created_at);const submitted=text('span',Number.isNaN(created.getTime())?inquiry.created_at:inquiryDateFormat.format(created));submitted.className='thread-date';
-   const state=text('span',inquiry.order_deleted?'关联订单已删除':inquiry.status||'未确认订单');state.className='thread-state';
+   const created = new Date(inquiry.created_at);
+   const submitted = Number.isNaN(created.getTime()) ? inquiry.created_at : inquiryDateFormat.format(created);
+   let current = inquiry.status || '未确认订单';
    const toggle=text('button','详情');toggle.type='button';toggle.className='thread-toggle';toggle.setAttribute('aria-haspopup','dialog');toggle.setAttribute('aria-label',`查看询价 ${inquiry.number} 详情`);
-   summary.append(number,customer,count,submitted,state,toggle);thread.append(summary);
+   const progress = statusProgress({number:inquiry.number, status:current, onChange:persistStatus, disabled:inquiry.order_deleted});
+   thread.append(recordProgressSummary({number:inquiry.number, customer:inquiry.payload.customer, submitted,
+     count:items.length, progress, details:toggle, unavailable:inquiry.order_deleted}));
    const content=document.createElement('div');content.className='thread-content';
    const reference=text('p',`询价编号：${inquiry.number} · 客户：${inquiry.payload.customer}`);reference.className='thread-reference';content.append(reference);
    const contacts=document.createElement('dl');contacts.className='thread-contacts';
@@ -95,8 +94,7 @@ async function inquiries(){
    const actions=document.createElement('div');actions.className='inquiry-convert-actions';
    const statusLabel=document.createElement('label');statusLabel.className='thread-status-control';statusLabel.append(text('span','订单状态'));
    const select=document.createElement('select');select.className='inquiry-status';select.setAttribute('aria-label',`询价 ${inquiry.number} 的订单状态`);
-   const current=inquiry.status||'未确认订单';
-   for(const value of result.statuses||['未确认订单','已确认订单','已发货','已交付'])select.append(new Option(value,value));
+   for(const value of result.statuses||['未确认订单','已确认订单','已发货','已交付'])select.append(new Option(orderStatusLabel(value),value));
    select.value=current;select.disabled=inquiry.order_deleted;statusLabel.append(select);actions.append(statusLabel);
    const undo=text('button','撤销本次修改');undo.type='button';undo.className='button secondary';
    const lastEdit=inquiryStatusEdits.get(inquiry.number);undo.hidden=inquiry.order_deleted||!lastEdit||lastEdit.current!==current;actions.append(undo);form.append(actions);
@@ -108,27 +106,35 @@ async function inquiries(){
     const hint=text('p','首次改变状态时应用此交期，覆盖所有商品交期，至少预留7天。');hint.className='field-hint';adjustment.append(hint);
     adjustment.addEventListener('toggle',()=>{date.disabled=!adjustment.open;if(!adjustment.open)date.value='';});form.append(adjustment);
    }
-   const explanation=text('p',inquiry.order_deleted?`关联订单 ${inquiry.order_number} 已删除，不能再次转单或修改状态；本询价保留。`:inquiry.order_number?`正式订单：${inquiry.order_number}。状态与采购员订单同步；撤销只恢复状态。`:'改为已确认、已发货或已交付时生成正式订单，默认沿用各商品原交期。');explanation.className='inquiry-status-help';form.append(explanation);
+   const explanation=text('p',inquiry.order_deleted?`关联订单 ${inquiry.order_number} 已删除，不能再次转单或修改状态；本询价保留。`:inquiry.order_number?`正式订单：${inquiry.order_number}。状态与采购员订单同步；撤销只恢复状态。`:'首次推进状态时会生成正式订单，默认沿用各商品原交期。');explanation.className='inquiry-status-help';form.append(explanation);
    const message=text('p',inquiryStatusMessages.get(inquiry.number)||'');message.className='inquiry-status-message';message.setAttribute('role','status');form.append(message);
    const localError=text('p','');localError.className='inline-error';localError.setAttribute('role','alert');localError.hidden=true;form.append(localError);
-   async function persistStatus(isUndo=false){
-    if(inquiry.order_deleted)return;
+   async function persistStatus(desired, isUndo = false){
+    if(select.disabled || desired === current)return;
     const edit=inquiryStatusEdits.get(inquiry.number);
     if(isUndo&&(!edit||edit.current!==current))return;
     if(!form.reportValidity()){select.value=current;return;}
-    const desired=isUndo?edit.previous:select.value;
-    select.disabled=true;undo.disabled=true;if(date)date.disabled=true;localError.hidden=true;message.textContent='正在保存状态…';
+    const stepButtons = progress.querySelectorAll('button');
+    stepButtons.forEach(button => { button.disabled = true; });
+    select.disabled=true;undo.disabled=true;if(date)date.disabled=true;localError.hidden=true;error.hidden=true;message.textContent='正在保存状态…';
     try{
      const body={status:desired,expected_status:current};if(adjustment?.open&&date.value)body.delivery_date=date.value;
      const saved=await api(`/api/sales/inquiries/${inquiry.number}/status`,body);
      if(isUndo)inquiryStatusEdits.delete(inquiry.number);
      else if(current!==saved.status)inquiryStatusEdits.set(inquiry.number,{previous:current,current:saved.status});
-     inquiryStatusMessages.set(inquiry.number,isUndo?`已撤销本次修改，恢复为「${saved.status}」。`:`状态已保存为「${saved.status}」。`);
+     current = inquiry.status = saved.status;
+     inquiry.order_number = saved.order_number;
+     setProgressStatus(progress, current);
+     const label = orderStatusLabel(current);
+     const notice = isUndo ? `已撤销本次修改，恢复为「${label}」。` : `状态已保存为「${label}」。`;
+     inquiryStatusMessages.set(inquiry.number, notice);
+     document.getElementById('inquiry-notice').textContent = `${inquiry.number} ${notice}`;
      await inquiries();document.getElementById('refresh-orders').click();
-    }catch(failure){select.value=current;message.textContent='';localError.textContent=failure.message;localError.hidden=false;}
-    finally{select.disabled=false;undo.disabled=false;if(date)date.disabled=!adjustment.open;}
+    }catch(failure){message.textContent='';localError.textContent=failure.message;localError.hidden=false;error.textContent=failure.message;error.hidden=false;}
+    finally{select.value=current;select.disabled=false;undo.disabled=false;if(date)date.disabled=!adjustment.open;stepButtons.forEach(button=>{button.disabled=false;});}
    }
-   select.onchange=()=>void persistStatus();undo.onclick=()=>void persistStatus(true);
+   select.onchange=()=>void persistStatus(select.value);
+   undo.onclick=()=>void persistStatus(inquiryStatusEdits.get(inquiry.number)?.previous, true);
    content.insertBefore(form,wrap);
    content.insertBefore(recordDeleteControl({kind:'inquiry',number:inquiry.number,status:()=>inquiry.status||'未确认订单',onDeleted:async()=>{
     inquiryStatusEdits.delete(inquiry.number);inquiryStatusMessages.delete(inquiry.number);
@@ -146,11 +152,115 @@ async function inquiries(){
 if(inquiryList){
  document.getElementById('refresh-inquiries').onclick=()=>void inquiries();
  document.addEventListener('sales-record-deleted',event=>{if(event.detail.kind==='order')void inquiries();});
+ document.addEventListener('sales-order-status-saved',()=>void inquiries());
  void inquiries();
 }
 
-const accountsLink=document.getElementById('accounts-link');
-if(accountsLink)api('/api/me').then(me=>{accountsLink.hidden=me.role!=='admin';}).catch(()=>{});
+const adminLinks = ['accounts-link', 'products-link'].map(id => document.getElementById(id)).filter(Boolean);
+if (adminLinks.length) api('/api/me').then(me => {
+  for (const link of adminLinks) link.hidden = me.role !== 'admin';
+}).catch(() => {});
+
+const productForm = document.getElementById('product-form');
+if (productForm) {
+  const fields = productForm.elements;
+  const save = productForm.querySelector('[type=submit]');
+  const cancel = document.getElementById('product-edit-cancel');
+  const title = document.getElementById('product-form-title');
+  const notice = document.getElementById('product-notice');
+  const list = document.getElementById('product-list');
+  const count = document.getElementById('product-count');
+  const search = document.getElementById('product-search');
+  let products = [];
+  let editing = null;
+
+  function setEdit(product) {
+    editing = product;
+    productForm.reset();
+    for (const key of ['sku', 'name', 'spec', 'category', 'color', 'unit']) {
+      fields.namedItem(key).value = product?.[key] ?? '';
+    }
+    for (const key of ['sku', 'category', 'color', 'unit']) fields.namedItem(key).disabled = Boolean(product);
+    title.textContent = product ? '编辑商品' : '新增商品';
+    save.textContent = product ? '保存修改' : '新增商品';
+    cancel.hidden = !product;
+  }
+
+  function renderProducts() {
+    const query = search.value.trim().toLowerCase();
+    const visible = products.filter(p =>
+      [p.sku, p.name, p.spec, p.category, p.color].some(value => value.toLowerCase().includes(query)));
+    count.textContent = query ? `找到 ${visible.length} 项，共 ${products.length} 项` : `${products.length} 项商品`;
+    const categories = [...new Set(products.map(p => p.category))];
+    document.getElementById('product-categories').replaceChildren(...categories.map(category => new Option(category)));
+    if (!visible.length) {
+      const empty = text('p', '没有匹配的商品。');
+      empty.className = 'account-empty';
+      list.replaceChildren(empty);
+      return;
+    }
+    list.replaceChildren(...visible.map(product => {
+      const row = document.createElement('article');
+      row.className = 'product-row';
+      const identity = document.createElement('div');
+      identity.className = 'account-identity';
+      identity.append(text('strong', product.name));
+      const meta = text('div', [product.sku, product.category, product.color, product.spec, `按${product.unit}计量`].filter(Boolean).join(' · '));
+      meta.className = 'account-meta';
+      identity.append(meta);
+      const edit = text('button', '编辑');
+      edit.type = 'button';
+      edit.className = 'button secondary';
+      edit.setAttribute('aria-label', `编辑 ${product.sku} ${product.name}`);
+      edit.onclick = () => {
+        if (save.disabled) return;
+        notice.textContent = '';
+        setEdit(product);
+        fields.namedItem('name').focus();
+      };
+      row.append(identity, edit);
+      return row;
+    }));
+  }
+
+  search.oninput = renderProducts;
+  cancel.onclick = () => {
+    notice.textContent = '';
+    setEdit(null);
+    fields.namedItem('sku').focus();
+  };
+  productForm.onsubmit = async event => {
+    event.preventDefault();
+    if (save.disabled) return;
+    save.disabled = cancel.disabled = true;
+    notice.textContent = '';
+    const values = Object.fromEntries(new FormData(productForm));
+    const request = editing ? { ...values, action: 'update', sku: editing.sku, revision: editing.revision } : { ...values, action: 'create' };
+    try {
+      const { product } = await api('/api/admin/products', request);
+      if (editing) products = products.map(row => row.sku === product.sku ? product : row);
+      else products = [product, ...products];
+      setEdit(null);
+      search.value = product.sku;
+      renderProducts();
+      notice.textContent = `${product.sku} 已保存，接单目录已更新。`;
+    } catch (error) {
+      notice.textContent = error.message;
+    } finally {
+      save.disabled = cancel.disabled = false;
+    }
+  };
+
+  api('/api/admin/products').then(data => {
+    products = data.products;
+    fields.namedItem('unit').append(...data.units.map(unit => new Option(unit)));
+    renderProducts();
+    save.disabled = false;
+  }).catch(error => {
+    list.replaceChildren(text('p', error.message));
+    count.textContent = '加载失败';
+  });
+}
 
 const notificationForm=document.getElementById('notification-form');
 if(notificationForm) {
@@ -159,14 +269,30 @@ if(notificationForm) {
   const save=document.getElementById('notification-save');
   const label=document.getElementById('notification-switch-label');
   const status=document.getElementById('notification-status');
+  const clear=document.getElementById('notification-clear');
+  const confirmation=document.getElementById('notification-clear-confirmation');
+  const clearMessage=document.getElementById('notification-clear-message');
+  const confirmClear=document.getElementById('notification-clear-confirm');
+  const cancelClear=document.getElementById('notification-clear-cancel');
   let saved=null;
-  const busy=value=>{enabled.disabled=value;recipient.disabled=value;save.disabled=value;};
+  let pendingSnapshot;
+  function busy(value) {
+    for (const control of [enabled,recipient,save,clear,confirmClear,cancelClear]) control.disabled=value;
+  }
+  function showQueue(settings, message='') {
+    const service=settings.demo_mode?'当前为本地演示，不会实际发信。':settings.configured?'发件服务已配置。':'发件服务尚未配置，请先在服务器配置 SMTP。';
+    status.textContent=`${message}${service} 待发 ${settings.pending_count} 封。`;
+    status.classList.remove('is-error');
+  }
   function showSettings(settings) {
     saved=settings;enabled.checked=settings.enabled;recipient.value=settings.recipient;
     label.textContent=settings.enabled?'已启用':'已关闭';
-    const service=settings.demo_mode?'当前为本地演示，不会实际发信。':settings.configured?'发件服务已配置。':'发件服务尚未配置，请先在服务器配置 SMTP。';
-    status.textContent=`${service} 待发 ${settings.pending_count} 封。`;
-    status.classList.remove('is-error');
+    showQueue(settings);
+  }
+  function hideClearConfirmation() {
+    pendingSnapshot=undefined;
+    confirmation.hidden=true;
+    clear.setAttribute('aria-expanded','false');
   }
   async function loadSettings() {
     busy(true);
@@ -176,6 +302,7 @@ if(notificationForm) {
   async function saveSettings() {
     if(!saved)return;
     if(!notificationForm.reportValidity()) {enabled.checked=saved.enabled;return;}
+    hideClearConfirmation();
     const body={enabled:enabled.checked,recipient:recipient.value.trim(),version:saved.version};
     busy(true);status.textContent='正在保存…';status.classList.remove('is-error');
     try {
@@ -186,6 +313,40 @@ if(notificationForm) {
       status.textContent=error.message;status.classList.add('is-error');
     } finally {busy(false);}
   }
+  clear.onclick=async()=>{
+    if(!confirmation.hidden) {
+      hideClearConfirmation();
+      return;
+    }
+    busy(true);
+    try {
+      const settings=await api('/api/sales/email-settings');
+      showQueue(settings);
+      if(!settings.pending_count) return;
+      pendingSnapshot=settings.pending_snapshot;
+      clearMessage.textContent=`取消 ${settings.pending_count} 封待发邮件？订单记录会保留，正在发送的邮件会继续发送。`;
+      confirmation.hidden=false;
+      clear.setAttribute('aria-expanded','true');
+    } catch(error) {
+      status.textContent=error.message;status.classList.add('is-error');
+    } finally {
+      busy(false);
+      (confirmation.hidden?clear:cancelClear).focus();
+    }
+  };
+  cancelClear.onclick=()=>{hideClearConfirmation();clear.focus();};
+  confirmClear.onclick=async()=>{
+    if(!pendingSnapshot)return;
+    busy(true);
+    try {
+      const settings=await api('/api/sales/email-queue/clear',{pending_snapshot:pendingSnapshot});
+      showQueue(settings,`已取消 ${settings.cleared_count} 封待发邮件。`);
+    } catch(error) {
+      status.textContent=error.message;status.classList.add('is-error');
+    } finally {
+      hideClearConfirmation();busy(false);clear.focus();
+    }
+  };
   notificationForm.onsubmit=event=>{event.preventDefault();void saveSettings();};
   enabled.onchange=()=>void saveSettings();
   recipient.oninput=()=>{status.textContent='邮箱已修改，点击“保存邮箱”后生效。';status.classList.remove('is-error');};

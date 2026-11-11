@@ -4,6 +4,76 @@ let dialogTitle;
 let dialogNumber;
 let opener;
 
+const statusLabels = new Map([
+  ['未确认订单', '未确认'],
+  ['已确认订单', '已确认'],
+  ['已发货', '已发货'],
+  ['已交付', '已收货'],
+]);
+
+export function orderStatusLabel(status) {
+  return statusLabels.get(status) ?? status;
+}
+
+export function setProgressStatus(progress, status) {
+  const buttons = [...progress.querySelectorAll('button')];
+  const current = buttons.findIndex(button => button.value === status);
+  buttons.forEach((button, index) => {
+    button.parentElement.classList.toggle('is-past', index < current);
+    button.parentElement.classList.toggle('is-current', index === current);
+    button.setAttribute('aria-pressed', String(index === current));
+  });
+}
+
+export function statusProgress({number, status, onChange, disabled = false}) {
+  const progress = document.createElement('ol');
+  progress.className = 'status-progress';
+  progress.setAttribute('aria-label', `${number} 订单状态`);
+  for (const [value, label] of statusLabels) {
+    const step = document.createElement('li');
+    const node = document.createElement('span');
+    node.className = 'status-node';
+    node.setAttribute('aria-hidden', 'true');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'status-step-button';
+    button.value = value;
+    button.textContent = label;
+    button.disabled = disabled;
+    button.onclick = () => void onChange(value);
+    step.append(node, button);
+    progress.append(step);
+  }
+  setProgressStatus(progress, status);
+  return progress;
+}
+
+export function recordProgressSummary({number, customer, submitted, count, progress, details, unavailable = false}) {
+  const summary = document.createElement('div');
+  summary.className = 'record-progress-summary';
+  const identity = document.createElement('div');
+  identity.className = 'record-progress-identity';
+  for (const [tag, value, className] of [
+    ['strong', number, 'thread-number'], ['span', customer, 'thread-customer'],
+    ['span', submitted, 'thread-date'], ['span', `${count} 项商品`, 'thread-count'],
+  ]) {
+    const item = document.createElement(tag);
+    item.className = className;
+    item.textContent = value;
+    item.title = value;
+    identity.append(item);
+  }
+  const controls = document.createElement('div');
+  const heading = document.createElement('div');
+  heading.className = 'record-progress-heading';
+  const label = document.createElement('span');
+  label.textContent = unavailable ? '关联订单已删除' : '订单状态';
+  heading.append(label, details);
+  controls.append(heading, progress);
+  summary.append(identity, controls);
+  return summary;
+}
+
 function outside(event) {
   const box = dialog.getBoundingClientRect();
   return event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom;

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>商品管理 · 华联服装辅料</title>
+  <link rel="stylesheet" href="/styles.css?v=product-management-1">
+  <script type="module" src="/management.js?v=product-management-1"></script>
+</head>
+<body class="accounts-page">
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="/sales/">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span><strong>商品管理</strong><small>华联服装辅料 · 福州分公司</small></span>
+      </a>
+      <nav class="topbar-actions" aria-label="页面导航">
+        <a class="quiet-link" href="/accounts/">账号管理</a>
+        <a class="quiet-link" href="/sales/">← 返回销售后台</a>
+      </nav>
+    </div>
+  </header>
+  <main class="shell accounts-main">
+    <section class="panel accounts-create" aria-labelledby="product-form-title">
+      <div class="accounts-section-title">
+        <h1 id="product-form-title">新增商品</h1>
+        <p>保存后，商品会出现在接单目录。也可以从下方选择现有商品，修改名称或尺寸。</p>
+      </div>
+      <form id="product-form" class="product-form">
+        <label class="field">货号<input name="sku" required maxlength="48" placeholder="例如 HL-100"></label>
+        <label class="field">商品名称<input name="name" required maxlength="120"></label>
+        <label class="field">尺寸与规格<input name="spec" required maxlength="120" placeholder="例如 内径 25 mm"></label>
+        <label class="field">品类<input name="category" required maxlength="40" list="product-categories"><datalist id="product-categories"></datalist></label>
+        <label class="field">颜色（选填）<input name="color" maxlength="40"></label>
+        <label class="field">单位<select name="unit" required><option value="">请选择单位</option></select></label>
+        <div class="product-form-actions">
+          <button class="button primary" type="submit" disabled>新增商品</button>
+          <button class="button secondary" type="button" id="product-edit-cancel" hidden>取消编辑</button>
+        </div>
+      </form>
+      <p id="product-notice" class="account-notice" role="status"></p>
+    </section>
+    <section class="panel accounts-directory" aria-labelledby="product-list-title">
+      <div class="accounts-list-heading product-list-heading">
+        <div>
+          <h2 id="product-list-title">商品目录</h2>
+          <span id="product-count" class="account-count">正在加载</span>
+        </div>
+        <input id="product-search" type="search" placeholder="搜索货号、名称或规格" aria-label="搜索货号、名称或规格">
+      </div>
+      <div id="product-list"><p class="account-empty">正在加载商品…</p></div>
+    </section>
+  </main>
+</body>
+</html>

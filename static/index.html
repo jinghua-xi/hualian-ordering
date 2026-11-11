@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#ffffff">
   <title>在线接单 · 华联服装辅料福州分公司</title>
-  <link rel="stylesheet" href="./styles.css?v=order-workflow-2">
-  <script type="module" src="./app.js?v=order-workflow-2"></script>
+  <link rel="stylesheet" href="./styles.css?v=product-combobox-2">
+  <script type="module" src="./app.js?v=free-chat-2"></script>
 </head>
 <body>
   <header class="topbar">
@@ -51,25 +51,24 @@
             </span>
             <div>
               <h2 id="chat-title">AI 接单助手</h2>
-              <p>说用途帮您选型，也可查商品或直接下单</p>
+              <p>可自由提问、查询商品，助手会按需搜索公开资料。</p>
+              <p id="chat-quota" role="status" title="北京时间零点重置">每日最多 150 条</p>
             </div>
           </div>
-          <div class="tool-panel-actions"><span class="tag" id="chat-source">对话接单</span><button id="close-chat" class="quiet-link" type="button" aria-label="收起AI接单助手">收起</button></div>
+          <div class="tool-panel-actions"><button id="close-chat" class="quiet-link" type="button" aria-label="收起AI接单助手">收起</button></div>
         </div>
         <div class="conversation" id="messages" role="log" aria-live="polite" aria-relevant="additions">
-          <div class="message assistant"><span class="message-label">AI 接单助手</span><p>您好！告诉我辅料要用在哪里，我可以帮您选型。也可以直接查询商品、规格，或告诉我您要订什么。</p></div>
+          <div class="message assistant"><span class="message-label">AI 接单助手</span><p>您好，可以问我任何话题。需要选辅料时，告诉我用途、货号或商品名称就行。</p></div>
         </div>
         <div class="chat-controls">
-          <div class="quick-replies" id="choices" aria-label="选型与查询示例、快捷回复">
-            <button class="choice" type="button" value="帽子抽绳需要收紧和固定，应该选什么配件？">帽绳如何收紧？</button>
-            <button class="choice" type="button" value="背包用25毫米织带，需要经常快速解开和扣合，推荐什么？">背包织带要快拆</button>
-            <button class="choice" type="button" value="20毫米肩带只需要调节长短，不需要拆开，应该选什么扣？">肩带只调节长短</button>
-            <button class="choice" type="button" value="戴手套时抓不住背包拉链头，想加一个方便抓握的配件，推荐什么？">拉链头不方便抓握</button>
-            <button class="choice" type="button" value="手工安装T5塑料四合扣，应该用什么工具？">T5安装用什么工具？</button>
+          <div class="quick-replies" id="choices" aria-label="建议问题">
+            <button class="choice" type="button" value="T5 四合扣有哪些颜色？">T5 有哪些颜色？</button>
+            <button class="choice" type="button" value="有哪些内径 25 mm 的插扣？">25 mm 插扣有哪些？</button>
+            <button class="choice" type="button" value="有哪些孔径 4.2 mm 的绳扣？">4.2 mm 绳扣有哪些？</button>
           </div>
           <form class="composer" id="chat-form">
-            <label class="sr-only" for="chat-message">输入辅料需求</label>
-            <input id="chat-message" name="message" placeholder="描述用途、查商品或补充订单信息" maxlength="500" autocomplete="off" required>
+            <label class="sr-only" for="chat-message">输入消息</label>
+            <input id="chat-message" name="message" placeholder="输入您的问题" maxlength="1500" autocomplete="off" required>
             <button class="button primary send" type="submit"><span>发送</span><span aria-hidden="true">↑</span></button>
           </form>
           <p class="inline-error" id="chat-error" role="alert" hidden></p>
@@ -85,7 +84,21 @@
           <button id="parse-paste" type="button" class="button primary">识别并核对</button>
         </div>
       </div>
-      <textarea id="paste-text" rows="5" maxlength="12000" placeholder="黑色T5四合扣 2000套&#10;M916-25插扣 500个&#10;2026年12月23日交货"></textarea>
+      <textarea id="paste-text" rows="5" maxlength="12000" placeholder="每行填写一项商品，也可以粘贴 Excel 表格。下方示例任选其一。"></textarea>
+      <div class="paste-examples" role="group" aria-label="采购文字示例，任选一种格式">
+        <figure>
+          <figcaption>统一交期</figcaption>
+          <pre>M602-20 黑色双调节书包插扣 500个
+K334 塑料帽绳弹簧扣 600个
+统一<time data-paste-example-days="7"></time>交货</pre>
+        </figure>
+        <span class="paste-examples-or">或</span>
+        <figure>
+          <figcaption>不同交期</figcaption>
+          <pre>M602-20 黑色双调节书包插扣 500个 <time data-paste-example-days="7"></time>交货
+K334 塑料帽绳弹簧扣 600个 <time data-paste-example-days="14"></time>交货</pre>
+        </figure>
+      </div>
       <p id="paste-error" role="alert" class="inline-error" hidden></p><p id="paste-info" role="status"></p>
       <div id="paste-review" hidden>
         <p id="paste-warnings" class="field-hint"></p>
@@ -114,11 +127,8 @@
 
           <form id="draft-form" class="order-form">
             <div class="field">
-              <label for="product">商品与规格</label>
-              <select id="product" name="sku" aria-describedby="product-hint" required>
-                <option value="">正在加载厂家公开货号…</option>
-              </select>
-              <p class="field-hint" id="product-hint">可在对话中选择规格，也可以在这里手动选择。</p>
+              <label for="product-search">商品与规格</label>
+              <div id="draft-product-picker"></div>
             </div>
             <dl class="product-detail" id="product-detail" hidden>
               <div><dt>货号</dt><dd id="detail-sku"></dd></div>
@@ -223,5 +233,15 @@
       <span>厂家公开资料 · 仅用于试单</span>
     </footer>
   </main>
+  <template id="product-picker-template">
+    <div class="product-picker">
+      <input type="search" role="combobox" aria-autocomplete="list" aria-expanded="false" placeholder="输入货号或商品名称" maxlength="120" autocomplete="off">
+      <div class="product-results" hidden>
+        <ul role="listbox" aria-label="商品与规格"></ul>
+        <p hidden>没有匹配的商品</p>
+      </div>
+      <span class="sr-only" role="status"></span>
+    </div>
+  </template>
 </body>
 </html>

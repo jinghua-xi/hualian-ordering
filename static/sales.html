@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#ffffff">
   <title>销售后台 · 华联服装辅料福州分公司</title>
-  <link rel="stylesheet" href="../styles.css?v=order-workflow-2">
-  <script type="module" src="../sales.js?v=record-delete-1"></script>
+  <link rel="stylesheet" href="../styles.css?v=notification-bottom-1">
+  <script type="module" src="../sales.js?v=order-details-2"></script>
 </head>
 <body>
   <header class="topbar">
@@ -17,32 +17,19 @@
       </a>
       <nav class="topbar-actions" aria-label="页面导航">
         <a class="quiet-link" id="accounts-link" href="/accounts/" hidden>账号管理</a>
+        <a class="quiet-link" id="products-link" href="/products/" hidden>商品管理</a>
         <a class="quiet-link" href="../"><span aria-hidden="true">←</span> 返回接单页</a>
         <form method="post" action="/logout"><button class="quiet-link" type="submit">登出</button></form>
       </nav>
     </div>
   </header>
-  <main class="shell sales-page">
+  <main class="shell sales-page sales-dashboard">
     <section class="hero sales-hero">
       <div class="hero-copy">
         <div class="eyebrow">试单核对</div>
         <h1>销售后台</h1>
         <p>核对订单明细、更新订单状态和下载 Excel。</p>
       </div>
-    </section>
-    <section class="panel notification-panel" aria-labelledby="notification-title">
-      <form id="notification-form">
-        <div class="notification-heading">
-          <div><h2 id="notification-title">订单邮件通知</h2><p>订单提交后，发送订单明细和 Excel 附件。</p></div>
-          <label class="model-switch-label notification-switch"><span id="notification-switch-label">加载中</span><input id="notification-enabled" class="model-switch" type="checkbox" role="switch" aria-label="启用订单邮件通知" disabled></label>
-        </div>
-        <div class="notification-recipient">
-          <div class="field"><label for="notification-recipient">收件邮箱</label><input id="notification-recipient" type="email" required maxlength="254" autocomplete="off" placeholder="name@example.com" aria-describedby="notification-help" disabled></div>
-          <button id="notification-save" class="button secondary" type="submit" disabled>保存邮箱</button>
-        </div>
-        <p id="notification-help" class="field-hint">关闭后暂停发送，重新启用会继续发送待发邮件。设置对尚未开始发送的邮件生效。</p>
-        <p id="notification-status" class="field-hint" role="status" aria-live="polite">正在读取通知设置…</p>
-      </form>
     </section>
     <section class="panel sales-panel" aria-labelledby="sales-title">
       <div class="panel-head">
@@ -56,6 +43,15 @@
           <button id="refresh-orders" class="button secondary" type="button">刷新订单</button>
         </div>
       </div>
+      <div class="order-filters" id="order-filters">
+        <div class="order-status-filters" id="order-status-filters" role="group" aria-label="按订单状态筛选"></div>
+        <div class="order-filter-selects">
+          <label for="order-company">采购公司</label>
+          <select id="order-company"><option value="">全部公司</option></select>
+          <label for="order-time-sort">下单时间</label>
+          <select id="order-time-sort"><option value="latest">最新在前</option><option value="oldest">最早在前</option></select>
+        </div>
+      </div>
       <p id="sales-error" class="inline-error" role="alert" hidden></p>
       <p id="status-notice" class="status-notice" role="status"></p>
       <div id="orders-wrap" class="record-list" aria-label="采购员订单列表" hidden>
@@ -65,14 +61,36 @@
     </section>
     <section class="panel inquiries-panel" aria-labelledby="inquiries-title">
       <div class="panel-head">
-        <div><h2 id="inquiries-title">新客户询价</h2><p>点击详情查看商品并修改状态，确认后自动生成正式订单。</p></div>
+        <div><h2 id="inquiries-title">新客户询价</h2><p>可在进度条上更新状态。首次推进会生成正式订单。</p></div>
         <button id="refresh-inquiries" class="button secondary" type="button">刷新询价</button>
       </div>
       <p id="inquiry-error" class="inline-error" role="alert" hidden></p>
       <p id="inquiry-notice" class="field-hint" role="status"></p>
       <div id="inquiries" class="record-list"><p class="empty-orders">正在加载询价…</p></div>
     </section>
-    <script type="module" src="/management.js?v=record-delete-1"></script>
+    <section class="panel notification-panel" aria-labelledby="notification-title">
+      <form id="notification-form">
+        <div class="notification-heading">
+          <div><h2 id="notification-title">订单邮件通知</h2><p>订单提交后，发送订单明细和 Excel 附件。</p></div>
+          <label class="model-switch-label notification-switch"><span id="notification-switch-label">加载中</span><input id="notification-enabled" class="model-switch" type="checkbox" role="switch" aria-label="启用订单邮件通知" disabled></label>
+        </div>
+        <div class="notification-recipient">
+          <div class="field"><label for="notification-recipient">收件邮箱</label><input id="notification-recipient" type="email" required maxlength="254" autocomplete="off" placeholder="name@example.com" aria-describedby="notification-help" disabled></div>
+          <button id="notification-save" class="button secondary" type="submit" disabled>保存邮箱</button>
+        </div>
+        <p id="notification-help" class="field-hint">关闭后暂停发送，重新启用会继续发送待发邮件。设置对尚未开始发送的邮件生效。</p>
+        <div class="notification-queue">
+          <p id="notification-status" class="field-hint" role="status" aria-live="polite">正在读取通知设置…</p>
+          <button id="notification-clear" class="button secondary" type="button" aria-controls="notification-clear-confirmation" aria-expanded="false" disabled>清空待发邮件</button>
+        </div>
+        <div id="notification-clear-confirmation" class="record-delete-confirmation" hidden>
+          <p id="notification-clear-message"></p>
+          <button id="notification-clear-confirm" class="button primary" type="button">确认清空</button>
+          <button id="notification-clear-cancel" class="button secondary" type="button">取消</button>
+        </div>
+      </form>
+    </section>
+    <script type="module" src="/management.js?v=product-management-1"></script>
     <footer class="footer">
       <span>华联服装辅料 · 福州分公司</span>
       <span>公开商品目录 · 订单仅用于试单</span>

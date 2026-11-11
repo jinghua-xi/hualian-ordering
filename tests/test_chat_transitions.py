@@ -1,7 +1,12 @@
-"""Completed-item transitions must preserve cart boundaries and unfinished drafts."""
+"""Consultation stays read-only and grounds recommendations in the live catalogue."""
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import timedelta
+from io import BytesIO
+import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -9,74 +14,134 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import server
 
 
-class ChatTransitions(unittest.TestCase):
-    def setUp(self):
-        self.ready = {**server.EMPTY_DRAFT, "sku": "T5", "category": "四合扣", "color": "黑色", "quantity": 100, "unit": "套",
-                      "delivery_date": (server.china_now().date()+timedelta(days=20)).isoformat(), "customer": "测试客户"}
-
-    def chat(self, text, draft=None):
+class ChatConsultation(unittest.TestCase):
+    def consult(self, message, **context):
         with patch.object(server, "DEMO_MODE", True):
-            return server.order_chat({"message": text, "draft": self.ready if draft is None else draft})
+            return server.consult_catalog(message, context)
 
-    def test_new_purpose_and_explicit_next_consultation_stage_previous(self):
-        for text in ("帽子抽绳需要收紧，推荐什么？", "我要25毫米宽的织带能快速解开，推荐什么？",
-                     "继续咨询下一个商品", "包住绳头的金属吊钟有哪些？", "绳扣多少钱？", "M916-25"):
-            with self.subTest(text=text):
-                result = self.chat(text)
-                self.assertTrue(result.get("next_item"))
-                self.assertEqual(result["draft"]["customer"], "测试客户")
-                self.assertEqual(result["draft"]["delivery_date"], "")
-                self.assertIsNone(result["draft"]["quantity"])
-        self.assertEqual(self.chat("M916-25")["draft"]["sku"], "M916-25")
+    def test_order_and_draft_commands_cannot_change_purchase_fields(self):
+        draft = {"sku": "T5", "quantity": 100, "customer": "测试客户"}
+        for message in ("再加一款", "选用 M916-25", "我要下单 T5 2000 套", "换成 M916-25",
+                        "客户名称是另一家公司", "备注：单独包装", "数量改成200套"):
+            with self.subTest(message=message):
+                result = self.consult(message, draft=draft, note_requested=True, next_item=True)
+                self.assertTrue({"draft", "next_item", "item_note"}.isdisjoint(result))
+                self.assertNotIn("已加入", result["reply"])
+                self.assertNotIn("已填写", result["reply"])
 
-    def test_model_recognized_use_case_stages_previous_too(self):
-        extracted = {**server.demo_extraction("建议"), "intent": "advice", "category": "拉片"}
-        with patch.object(server, "DEMO_MODE", False), patch.object(server, "qwen_extraction", return_value=extracted), patch.object(server, "enrich_advice", side_effect=lambda result, message: result):
-            result = server.order_chat({"message": "背包拉头处想配一个便于手指拉动的小部件，有推荐吗？", "draft": self.ready})
-        self.assertTrue(result.get("next_item"))
-        self.assertFalse(result["draft"]["sku"])
-        self.assertEqual({p["category"] for p in result["matches"]}, {"拉片"})
+    def test_catalogue_queries_and_followups_use_actual_specs(self):
+        for message, category, spec in (
+            ("有哪些内径 25 mm 的插扣？", "插扣", "25 mm"),
+            ("有哪些孔径四点二毫米的绳扣？", "绳扣", "4.2 mm"),
+            ("背包织带25毫米，需要快速解开", "插扣", "25 mm"),
+            ("20毫米肩带只调长短，不需要打开", "调节扣", "20 mm"),
+        ):
+            with self.subTest(message=message):
+                result = self.consult(message)
+                self.assertTrue(result["matches"])
+                for product in result["matches"]:
+                    self.assertEqual(product, server.CATALOG[product["sku"]])
+                    self.assertEqual(product["category"], category)
+                    self.assertTrue(server.spec_matches(product, spec))
+                suggestions = server.consultation_choices(message, result["matches"])
+                self.assertGreater(len(suggestions), 0)
+                self.assertLessEqual(len(suggestions), 3)
+                for suggestion in suggestions:
+                    detail = self.consult(suggestion["value"], catalog_context=result["catalog_context"])
+                    self.assertEqual(len(detail["matches"]), 1)
+                    self.assertIn(detail["matches"][0], result["matches"])
 
-    def test_incomplete_items_are_not_discarded(self):
-        for missing in ("sku", "quantity", "delivery_date"):
-            draft = {**self.ready, missing: None if missing == "quantity" else ""}
-            for text in ("帽子抽绳需要收紧，推荐什么？", "继续咨询下一个商品"):
-                with self.subTest(missing=missing, text=text):
-                    result = self.chat(text, draft)
-                    self.assertEqual(result["mode"], "draft_pending")
-                    self.assertFalse(result.get("next_item"))
-                    self.assertIn("草稿还没完成", result["reply"])
-                    self.assertEqual(result["draft"]["quantity"], draft["quantity"])
-        with patch.object(server, "DEMO_MODE", False), patch.object(server, "qwen_extraction", return_value={**server.demo_extraction("建议"), "intent":"advice", "category":"拉片"}):
-            result=server.order_chat({"message":"戴手套时不方便抓握，能帮我选吗？", "draft":{**self.ready,"delivery_date":""}})
-        self.assertEqual(result["mode"], "draft_pending")
+    def test_alternatives_disclose_incompatible_spec_or_category(self):
+        result = self.consult("推荐三款 99 毫米的黑色插扣")
+        self.assertIn("目录备选", result["reply"])
+        self.assertTrue(result["matches"])
+        for product in result["matches"]:
+            self.assertEqual(product["category"], "插扣")
+            self.assertIn(product["spec"], result["reply"])
+        result = self.consult("推荐三款商务衬衫纽扣")
+        self.assertIn("没有收录纽扣", result["reply"])
+        self.assertIn("与缝纫纽扣不同", result["reply"])
 
-    def test_corrections_and_questions_about_current_item_do_not_stage(self):
-        for text in ("数量改成200套", "这个扣子怎么安装？", "这款有其他颜色吗？", "这款多少钱？", "这个25毫米能用吗？", "T5和M916-25有什么区别？"):
-            with self.subTest(text=text):
-                self.assertFalse(self.chat(text).get("next_item"))
+    def test_unknown_sku_and_unverified_performance_do_not_return_products(self):
+        for query in ("推荐一个型号叫M9999-99的插扣", "M9999-99", "哪个插扣能承重一百公斤？",
+                      "推荐一部电影", "怎么打开 Excel？", "T5 20mm"):
+            with self.subTest(query=query):
+                result = self.consult(query)
+                self.assertFalse((result or {}).get("matches"))
 
-    def test_dates_and_customer_names_remain_current_item_fields(self):
-        delivery=(server.china_now().date()+timedelta(days=30)).isoformat()
-        result=self.chat(delivery)
-        self.assertFalse(result.get("next_item"))
-        self.assertEqual(result["draft"]["delivery_date"], delivery)
-        result=self.chat("客户名称是另一家公司")
-        self.assertFalse(result.get("next_item"))
-        self.assertEqual(result["draft"]["customer"], "另一家公司")
+    def test_t5_colour_variants_and_bounded_suggestions(self):
+        message = "T5 四合扣有哪些颜色？"
+        result = self.consult(message)
+        self.assertEqual({item["color"] for item in result["matches"]}, {"黑色", "灰色", "红色", "白色"})
+        self.assertEqual(len(server.consultation_choices(message, result["matches"])), 3)
+        all_products = self.consult("目录里有哪些商品？")
+        self.assertEqual(len(all_products["matches"]), len(server.PRODUCTS))
+        self.assertEqual(len(server.consultation_choices("", all_products["matches"])), 3)
 
-    def test_validated_units_and_dates_required_before_staging(self):
-        for draft in ({**self.ready, "unit":"个"}, {**self.ready,"quantity":0}, {**self.ready,"delivery_date":server.china_now().date().isoformat()}):
-            result=self.chat("帽子抽绳需要收紧，推荐什么？", draft)
-            self.assertEqual(result["mode"], "draft_pending")
-            self.assertFalse(result.get("next_item"))
+    def test_manufacturer_code_can_match_multiple_specifications(self):
+        result = self.consult("M364 有哪些规格？")
+        self.assertEqual({item["manufacturer_sku"] for item in result["matches"]}, {"M364"})
+        self.assertEqual(len(result["matches"]), 4)
+        variant = self.consult("M364-V25 有什么规格？")
+        self.assertEqual([item["sku"] for item in variant["matches"]], ["M364-V25"])
 
-    def test_model_failure_does_not_prevent_known_transition(self):
-        with patch.object(server,"DEMO_MODE",False),patch.object(server,"qwen_extraction",side_effect=server.RequestError(503,"暂时不可用")):
-            result=server.order_chat({"message":"帽子抽绳需要收紧，推荐什么？","draft":self.ready})
-        self.assertTrue(result.get("next_item"))
-        self.assertIn("暂时无法连接AI",result["reply"])
-        self.assertEqual(result["draft"]["customer"], "测试客户")
+    def test_qwen_cannot_supply_a_sku_outside_the_catalogue(self):
+        payload = {"intent": "advice", "category": "插扣", "spec": "", "color": "", "material": "",
+                   "catalog_skus": ["NONEXISTENT-123"]}
+        answer = BytesIO(json.dumps({"message": {"content": json.dumps(payload)}}).encode())
+        with patch.object(server, "DEMO_MODE", False), patch.object(server, "build_opener") as opener:
+            opener.return_value.open.return_value = answer
+            result = server.consult_catalog("想给这件衣服配点辅料", {})
+        opener.return_value.open.assert_called_once()
+        self.assertFalse(result.get("matches"))
+        self.assertNotIn("NONEXISTENT", result["reply"])
+
+    def test_daily_quota_is_atomic_and_resets_at_beijing_midnight(self):
+        now = server.china_now().replace(hour=23, minute=59, second=59, microsecond=0)
+        owner = "account:quota-test"
+        with tempfile.TemporaryDirectory() as folder, patch.object(server, "DB_PATH", Path(folder) / "orders.sqlite3"), \
+                patch.object(server, "china_now", return_value=now) as clock:
+            server.init_db()
+            with closing(server.connect_db()) as db, db:
+                db.execute("INSERT INTO chat_usage VALUES (?, ?, ?)", (owner, now.date().isoformat(), 149))
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(lambda _: server.chat_quota(owner, spend=True), range(2)))
+            self.assertEqual(sum(allowed for _, allowed in results), 1)
+            self.assertEqual(server.chat_quota(owner)[0]["remaining"], 0)
+            server.refund_chat(owner, now.date().isoformat())
+            self.assertEqual(server.chat_quota(owner)[0]["remaining"], 1)
+            clock.return_value = now + timedelta(seconds=1)
+            self.assertEqual(server.chat_quota(owner)[0]["remaining"], 150)
+            self.assertEqual(server.chat_quota(owner, spend=True)[0]["remaining"], 149)
+
+    def test_general_questions_do_not_get_misrouted_to_the_catalogue(self):
+        response = {"reply": "这是一般知识答复。", "search_query": ""}
+        with patch.object(server, "generate_chat_reply", return_value=response) as generate:
+            for message in ("怎么打开 Excel？", "Python3 怎么读取文件？", "四合扣是谁发明的？", "推荐一部电影"):
+                with self.subTest(message=message):
+                    self.assertEqual(server.answer_chat(message, {})["reply"], response["reply"])
+            self.assertEqual(generate.call_count, 4)
+
+    def test_automatic_search_grounds_answer_and_does_not_send_history(self):
+        sources = [{"title": "地铁公告", "url": "https://example.com/news", "snippet": "线路已开通。"}]
+        with patch.object(server, "DEMO_MODE", False), \
+                patch.object(server, "generate_chat_reply", side_effect=[
+                    {"reply": "", "search_query": "柏林地铁开通公告"}, {"reply": "线路已开通 [1]。", "search_query": ""}]) as generate, \
+                patch.object(server, "public_keyword_search", return_value=sources) as search:
+            result = server.answer_chat("柏林这条地铁开通了吗？", {"history": [{"role": "user", "content": "订单号内部记录"}]})
+        search.assert_called_once_with("柏林地铁开通公告", baike=False)
+        self.assertEqual(generate.call_args.kwargs["references"], sources)
+        self.assertEqual(result["references"], sources)
+        self.assertEqual(result["reply"], "线路已开通 [1]。")
+
+    def test_snap_uses_have_a_manufacturer_reference_when_live_search_fails(self):
+        with patch.object(server, "public_keyword_search", return_value=[]), \
+                patch.object(server, "generate_chat_reply") as generate:
+            result = server.answer_chat("搜索四合扣的用途场景", {})
+        generate.assert_not_called()
+        self.assertEqual(result["web_status"], "reference")
+        self.assertIn("包袋", result["reply"])
+        self.assertEqual(result["references"], [server.SNAP_USE_GUIDE])
 
 
 if __name__ == "__main__":

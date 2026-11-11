@@ -172,6 +172,56 @@ class NotificationSettings(unittest.TestCase):
         self.assertEqual(job[3], 'original@example.com')
         self.assertIsNone(app.claim_order_email())
 
+    def queue_order(self, suffix):
+        order, _ = self.app.save_order(dict(customer='测试', request_id=f'notification-queue-{suffix}', items=[
+            dict(sku='T5', quantity=1, delivery_date=(self.app.china_now().date() + timedelta(days=10)).isoformat())]), 'preview')
+        return order['number']
+
+    def test_clear_cancels_waiting_jobs_and_preserves_orders(self):
+        app = self.app
+        sent = self.queue_order('sent')
+        with patch('server.send_order_email'):
+            self.assertTrue(app.deliver_next_order_email())
+        active = self.queue_order('active')
+        self.assertEqual(app.claim_order_email()[0], active)
+        waiting = self.queue_order('waiting')
+        retry = self.queue_order('retry')
+        with closing(app.connect_db()) as db, db:
+            db.execute("UPDATE order_email_outbox SET status='failed', attempts=1, next_attempt_at=9999999999 WHERE order_number=?", (retry,))
+        self.req(dict(enabled=False, recipient='original@example.com', version=1))
+        settings = self.req()[1]
+        self.assertEqual(settings['pending_count'], 2)
+        path = '/api/sales/email-queue/clear'
+        body = dict(pending_snapshot=settings['pending_snapshot'])
+        for user in (None, 'preview:preview'):
+            self.assertEqual(self.req(body, user=user, path=path)[0], 401)
+        self.assertEqual(self.req(body, path=path, **{'Sec-Fetch-Site': 'cross-site'})[0], 403)
+        self.assertEqual(self.req({}, path=path)[0], 400)
+        code, result = self.req(body, user='sales_test:password123', path=path)
+        self.assertEqual(code, 200)
+        self.assertEqual((result['cleared_count'], result['pending_count']), (2, 0))
+        for number, state in ((sent, 'sent'), (active, 'sending'), (waiting, 'cancelled'), (retry, 'cancelled')):
+            order = app.find_order(number)
+            self.assertEqual(order['email_status'], state)
+            self.assertEqual(order['items'][0]['quantity'], 1)
+        self.req(dict(enabled=True, recipient='original@example.com', version=2))
+        new = self.queue_order('new')
+        with patch('server.send_order_email') as send:
+            self.assertTrue(app.deliver_next_order_email())
+            self.assertEqual(send.call_args.args[0]['number'], new)
+            self.assertFalse(app.deliver_next_order_email())
+            send.assert_called_once()
+
+    def test_clear_rejects_changed_queue_even_with_same_count(self):
+        first = self.queue_order('first')
+        settings = self.req()[1]
+        self.assertEqual(settings['pending_count'], 1)
+        self.assertEqual(self.app.claim_order_email()[0], first)
+        second = self.queue_order('second')
+        self.assertEqual(self.req()[1]['pending_count'], 1)
+        self.assertEqual(self.req(dict(pending_snapshot=settings['pending_snapshot']), path='/api/sales/email-queue/clear')[0], 409)
+        self.assertEqual(self.app.find_order(second)['email_status'], 'pending')
+
 
 if __name__ == '__main__':
     unittest.main()
