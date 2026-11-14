@@ -102,6 +102,38 @@ OPEN_RECOMMENDATION = re.compile(
 OPEN_PREFERENCE = re.compile(r"(?:随便(?:啥|什么|挑(?:一款|几个)?)?|都行|都可以|没(?:有)?要求|不限|你看着推荐)[。！？!?\s]*")
 BUTTON_TOPIC = re.compile(r"(?:我想看|看看|想看|需要)?\s*(?:扣子|扣件|衣服扣)[。！？!?\s]*")
 FORMAL_BUTTON_TOPIC = re.compile(r"(?:用在|用于)?\s*(?:正装|西装|衬衫)(?:用的?)?(?:扣子|纽扣|钮扣)?[。！？!?\s]*")
+SCENARIO_PRODUCTS = {
+    "背包": {"插扣": ("织带快拆", "背包"), "调节扣": ("调整肩带长短", "背包带"),
+           "D环扣": ("预留挂接点", "肩带连接点"), "拉片": ("方便拉头抓握", "背包拉头")},
+    "箱包": {"对扣": ("箱包扣合", "箱包扣合"), "钩扣": ("挂接肩带", "箱包配件"),
+           "D环扣": ("预留连接点", "箱包连接")},
+    "腰带": {"插扣": ("织带快拆", "腰带"), "调节扣": ("调整腰带长短", "腰带调节")},
+    "服装": {"四合扣": ("门襟按压开合", "衣物门襟"), "拉片": ("方便拉头抓握", "衣物拉头"),
+           "绳扣": ("调节下摆抽绳", "衣服下摆")},
+    "帽子": {"绳扣": ("调节帽绳松紧", "帽绳"), "绳尾夹": ("收整帽绳末端", "帽绳绳端")},
+    "抽绳袋": {"绳扣": ("收紧袋口抽绳", "抽绳袋"), "绳尾夹": ("装饰抽绳末端", "抽绳装饰")},
+}
+SCENARIO_ALIASES = {
+    "背包": "背包", "双肩包": "背包", "书包": "背包",
+    "箱包": "箱包", "行李包": "箱包", "旅行包": "箱包", "手提包": "箱包",
+    "腰带": "腰带", "织带腰带": "腰带",
+    "服装": "服装", "衣服": "服装", "外套": "服装", "夹克": "服装", "童装": "服装",
+    "帽子": "帽子", "连帽衫": "帽子",
+    "抽绳袋": "抽绳袋", "束口袋": "抽绳袋",
+}
+SCENARIO_REQUEST = re.compile(
+    r"(?:我\s*)?(?:想要|想|准备|打算|要|正在|在)?\s*(?:做|制作|生产|设计|用于|用在)?\s*"
+    rf"({'|'.join(SCENARIO_ALIASES)})\s*[,，]?\s*"
+    r"(?:用|需要|适合|有)?(?:什么|哪些)?(?:的)?(?:辅料|配件|扣件|商品)?(?:推荐)?(?:吗|呢)?[。！？!?\s]*"
+)
+SCENARIO_FOLLOWUP = re.compile(
+    r"(?:主要|只)?(?:想要|想|我要|要|需要|用于)?\s*(?:织带(?:能|要)?)?"
+    r"(?:(?P<插扣>快拆|快速拆开|快速解开|打开和扣合|开合)|"
+    r"(?P<调节扣>调(?:节|整)?肩带(?:长短)?|调长短|调节长短)|"
+    r"(?P<D环扣>(?:预留|加|留)?(?:个|一个)?(?:挂接点|挂点|连接点))|"
+    r"(?P<绳尾夹>(?:包住|收整|装饰)(?:绳头|绳尾|绳端))|"
+    r"(?P<拉片>方便拉头抓握))[。！？!?\s]*"
+)
 
 WEB_REQUEST = re.compile(
     r"^(?:请(?:帮我)?|帮我)?\s*(?:(?P<baike>在百度百科(?:搜索|查)(?:一下)?|查(?:一下)?百度百科)|"
@@ -366,6 +398,11 @@ def recommendation_category(message):
             or ("纽扣" if "衬衫" in message else ""))
 
 
+def requested_scenario(message):
+    match = SCENARIO_REQUEST.fullmatch(message)
+    return SCENARIO_ALIASES[match[1]] if match else ""
+
+
 def clean_catalog_context(value):
     value = value if isinstance(value, dict) else {}
     scope = value.get("scope")
@@ -374,7 +411,11 @@ def clean_catalog_context(value):
     advice = value.get("advice")
     if isinstance(advice, dict):
         width = advice.get("width")
-        advice = {"category": allowed_string(advice.get("category"), current_catalog().categories), "width": advice_width(width) if isinstance(width, str) else ""}
+        advice = {
+            "category": allowed_string(advice.get("category"), current_catalog().categories),
+            "width": advice_width(width) if isinstance(width, str) else "",
+            "scenario": allowed_string(advice.get("scenario"), SCENARIO_PRODUCTS),
+        }
     else:
         advice = None
     return {
@@ -799,6 +840,7 @@ def catalog_chat(message, extracted, context, reference, requested_skus, source,
 
 def purchasing_advice(message, extracted, context, reference, requested_skus, purpose, width, source):
     previous = context["advice"] or {}
+    scenario = requested_scenario(message) or previous.get("scenario", "")
     scope = context["scope"].copy() if previous else EMPTY_CATALOG_SCOPE.copy()
     stated = literal_scope(message)
     scope.update({field: value for field, value in stated.items() if value})
@@ -831,7 +873,7 @@ def purchasing_advice(message, extracted, context, reference, requested_skus, pu
         and (not scope["color"] or p["color"] == scope["color"])
         and (not scope["material"] or material_matches(p, scope["material"]))
     ]
-    candidates = rank_products(message, candidates, limit=len(candidates))
+    candidates = rank_products(f"{scenario} {message}" if scenario else message, candidates, limit=len(candidates))
     if category == "打扣工具":
         if SNAP_REMOVAL.search(message):
             candidates = [p for p in candidates if "拆卸" in p.get("uses", []) or "四合扣拆卸" in p.get("uses", [])]
@@ -850,16 +892,33 @@ def purchasing_advice(message, extracted, context, reference, requested_skus, pu
         matches = []
         reply = "目录没有可核实的承重或洗护参数，请让销售按使用条件确认。这个扣件准备装在哪个位置？"
     elif not category:
-        families = named if comparison else ("插扣", "调节扣", "D环扣", "钩扣", "四合扣", "对扣")
-        representatives = [next((p for p in matching if p["category"] == family), None) for family in families]
-        matches = [p for p in representatives if p][:3]
+        uses = SCENARIO_PRODUCTS[scenario] if scenario and not comparison else {}
+        families = named if comparison else uses or ("插扣", "调节扣", "D环扣", "钩扣", "四合扣", "对扣")
+        representatives = []
+        for family in families:
+            use_tag = uses[family][1] if uses else ""
+            item = next((p for p in matching if p["category"] == family
+                         and (not use_tag or use_tag in p["uses"])), None)
+            if item:
+                representatives.append(item)
+        matches = representatives[:3]
         if comparison:
-            reply = "".join(ADVICE_TYPES[family][0] for family in families)
+            reply = "".join(ADVICE_TYPES[family][0] for family in families) + "您主要想让扣件做什么？"
+        elif uses and matches:
+            examples = "；".join(
+                f"{product['name']}（{display_sku(product)}，{product['spec']}）用于{uses[product['category']][0]}"
+                for product in matches
+            )
+            options = "、".join(uses[product["category"]][0] for product in matches)
+            reply = f"做{scenario}可以参考这几款目录商品。{examples}。您主要需要{options}中的哪一种？"
+        elif uses:
+            reply = f"目录暂时没有找到符合这些条件的{scenario}配件。您要找哪个部位的辅料？"
         else:
-            reply = "如果要开合织带，先看插扣；要调长短，先看调节扣；要留连接点，可以看 D 形环。"
+            reply = "如果要开合织带，先看插扣；要调长短，先看调节扣；要留连接点，可以看 D 形环。您主要想让扣件做什么？"
         if width and not matches:
-            return catalog_alternatives(message, scope, f"当前目录没有匹配 {width} 的货号。", spec=width, source=source)
-        reply += "您主要想让扣件做什么？"
+            response = catalog_alternatives(message, scope, f"当前目录没有匹配 {width} 的货号。", spec=width, source=source)
+            response["catalog_context"]["advice"]["scenario"] = scenario
+            return response
     else:
         explanation, question = ADVICE_TYPES.get(category, ("", "您需要什么规格？"))
         if category == "打扣工具" and matching:
@@ -899,7 +958,7 @@ def purchasing_advice(message, extracted, context, reference, requested_skus, pu
     return {
         "reply": reply, "source": source, "matches": matches,
         "catalog_context": {"scope": scope, "visible_skus": [p["sku"] for p in matches],
-                            "advice": {"category": category, "width": width}},
+                            "advice": {"category": category, "width": width, "scenario": scenario}},
     }
 
 
@@ -952,6 +1011,8 @@ def consult_catalog(message, body):
         return purchasing_advice(message, extracted, empty_context, (False, None), [], "四合扣", "", source)
     if FORMAL_BUTTON_TOPIC.fullmatch(message) and (context["scope"]["category"] or re.search(r"衬衫|扣子|纽扣", message)):
         return purchasing_advice(message, extracted, empty_context, (False, None), [], "纽扣", "", source)
+    if requested_scenario(message):
+        return purchasing_advice(message, extracted, empty_context, (False, None), [], "", "", source)
     if OPEN_RECOMMENDATION.fullmatch(message) or OPEN_PREFERENCE.fullmatch(message) or CONFIRMATION.fullmatch(message):
         category = context["scope"]["category"]
         if category:
@@ -962,6 +1023,13 @@ def consult_catalog(message, body):
                     mentioned_skus(prior, ""), category, "", source), prior)
             context["advice"] = context["advice"] or {"category": category, "width": advice_width(prior)}
             return purchasing_advice(message, extracted, context, (False, None), [], category, "", source)
+        if context["advice"] and context["advice"]["scenario"]:
+            return purchasing_advice(message, extracted, context, (False, None), [], "", "", source)
+        recent_user = next((turn["content"] for turn in reversed(history) if turn["role"] == "user"), "")
+        if requested_scenario(recent_user):
+            return purchasing_advice(recent_user, extracted, empty_context, (False, None), [], "", "", source)
+        if OPEN_RECOMMENDATION.fullmatch(message) and CATALOG_QUERY.search(message):
+            return purchasing_advice(message, extracted, empty_context, (False, None), [], "", "", source)
         return clarification if CATALOG_QUERY.search(message) else None
 
     # An exact name or SKU is more reliable than interpreting words in the title as a use case.
@@ -976,6 +1044,10 @@ def consult_catalog(message, body):
     previous_advice = context["advice"]
     if previous_advice and not width and re.fullmatch(r"[1-9]\d{0,2}", message):
         width = f"{message} mm"
+    if previous_advice and previous_advice["scenario"] and not purpose:
+        followup = SCENARIO_FOLLOWUP.fullmatch(message)
+        if followup and followup.lastgroup in SCENARIO_PRODUCTS[previous_advice["scenario"]]:
+            purpose = followup.lastgroup
     advice_followup = previous_advice and (width or UNKNOWN_WIDTH.search(message))
     if purpose or (topic and (asks_advice or topic not in catalog.categories)) or advice_followup:
         result = purchasing_advice(message, extracted, context, reference, skus, purpose or topic, width, source)

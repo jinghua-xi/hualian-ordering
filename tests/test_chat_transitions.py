@@ -62,6 +62,40 @@ class ChatConsultation(unittest.TestCase):
         self.assertIn("没有收录纽扣", result["reply"])
         self.assertIn("与缝纫纽扣不同", result["reply"])
 
+    def test_broad_use_cases_return_catalogue_products_on_the_first_turn(self):
+        for message, categories in (
+            ("做背包", {"插扣", "调节扣", "D环扣"}),
+            ("旅行包需要什么辅料？", {"对扣", "钩扣", "D环扣"}),
+            ("做腰带", {"插扣", "调节扣"}),
+            ("做夹克", {"四合扣", "拉片", "绳扣"}),
+            ("做帽子", {"绳扣", "绳尾夹"}),
+            ("做抽绳袋", {"绳扣", "绳尾夹"}),
+        ):
+            with self.subTest(message=message), patch.object(server, "generate_chat_reply") as generate:
+                result = server.answer_chat(message, {})
+                generate.assert_not_called()
+                self.assertEqual({p["category"] for p in result["matches"]}, categories)
+                self.assertLessEqual(len(result["matches"]), 3)
+                for product in result["matches"]:
+                    self.assertEqual(product, server.CATALOG[product["sku"]])
+                    self.assertIn(product["spec"], result["reply"])
+
+    def test_backpack_recommendation_keeps_context_and_narrows_to_a_size(self):
+        initial = self.consult("做背包")
+        for context in (
+            {"catalog_context": initial["catalog_context"]},
+            {"history": [{"role": "user", "content": "做背包"}]},
+        ):
+            recommendation = self.consult("有什么商品推荐", **context)
+            self.assertEqual(recommendation["matches"], initial["matches"])
+            buckles = self.consult("需要织带能打开和扣合", catalog_context=recommendation["catalog_context"])
+            sized = self.consult("25毫米", catalog_context=buckles["catalog_context"])
+            self.assertTrue(sized["matches"])
+            for product in sized["matches"]:
+                self.assertEqual(product["category"], "插扣")
+                self.assertTrue(server.spec_matches(product, "25 mm"))
+            self.assertIsNone(self.consult("怎么打开 Excel？", catalog_context=recommendation["catalog_context"]))
+
     def test_unknown_sku_and_unverified_performance_do_not_return_products(self):
         for query in ("推荐一个型号叫M9999-99的插扣", "M9999-99", "哪个插扣能承重一百公斤？",
                       "推荐一部电影", "怎么打开 Excel？", "T5 20mm"):
